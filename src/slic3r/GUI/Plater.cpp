@@ -15381,6 +15381,8 @@ void Plater::priv::set_bed_shape(const Pointfs       &shape,
         slot_bed.height_to_lid    = float(config->opt_float("extruder_clearance_height_to_lid"));
         slot_bed.height_to_rod    = float(config->opt_float("extruder_clearance_height_to_rod"));
         partplate_list.set_slot_printer_bed(m_active_printer_slot, std::move(slot_bed));
+        // Only the selected plate draws the logo.
+        partplate_list.update_logo_texture_filename(custom_texture);
         if (bed.set_shape(shape, printable_height, extruder_areas, extruder_heights, custom_model, force_as_custom,
                           partplate_list.get_current_shape_position())) {
             if (view3D) view3D->bed_shape_changed();
