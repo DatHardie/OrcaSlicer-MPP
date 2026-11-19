@@ -828,7 +828,7 @@ static std::string concat_strings(const std::set<std::string> &strings,
 }
 
 void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
-    // Undo the other printers' temporary locks on every exit.
+    // Unlock other printers' plates on every exit.
     ScopeGuard other_printers([this]() {
         PartPlateList& plates = m_plater->get_partplate_list();
         for (int i : m_other_printer_plates)

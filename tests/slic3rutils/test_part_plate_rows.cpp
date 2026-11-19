@@ -318,7 +318,7 @@ TEST_CASE("Plates created with a bed template join that printer's row", "[PartPl
     CHECK_THAT(f.origin(2).x(), WithinAbs(120. * (1. + gap), 1e-6));
     CHECK_THAT(f.origin(2).y(), WithinAbs(f.origin(1).y(), 1e-6));
 
-    // Without a template new plates use the project printer.
+    // Without template, new plates use project printer.
     f.plates.set_new_plate_bed(PlatePrinterBed{});
     REQUIRE(f.plates.create_plate(false) == 3);
     CHECK_FALSE(f.plates.get_plate(3)->printer_bed().assigned());

@@ -38,7 +38,7 @@ namespace Slic3r {
 namespace GUI {
 
 //BBS: add partplate related logic
-// Moves an item by its plate's offset times sign.
+// Adds sign times the plate offset.
 void FillBedJob::shift_from_plate(ArrangePolygon& ap, PartPlateList& plates, int index, int sign) const
 {
     if (plates.has_printer_beds()) {

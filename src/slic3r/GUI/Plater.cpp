@@ -15589,7 +15589,7 @@ void Plater::priv::invalidate_plates_for_presets(Preset::Type type)
         return;
     const bool multi = multi_printer_enabled();
     const PresetBundle& bundle = *wxGetApp().preset_bundle;
-    // Other slots sharing the changed preset are stale too.
+    // Slots sharing the changed preset are stale.
     auto shares_preset = [&](int slot) {
         const PrinterSlot* other = partplate_list.printer_slot(slot);
         if (other == nullptr)
