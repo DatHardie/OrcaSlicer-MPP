@@ -414,8 +414,10 @@ PlateSettingsDialog::PlateSettingsDialog(wxWindow* parent, const wxString& title
     m_printer_choice = new ComboBox(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(240), -1), 0, NULL, wxCB_READONLY);
     top_sizer->Add(m_printer_txt, 0, wxALIGN_CENTER_VERTICAL | wxALIGN_LEFT | wxTOP | wxBOTTOM, FromDIP(5));
     top_sizer->Add(m_printer_choice, 0, wxALIGN_CENTER_VERTICAL | wxALIGN_RIGHT | wxTOP | wxBOTTOM, FromDIP(5));
-    m_printer_txt->Hide();
-    m_printer_choice->Hide();
+    // Sized with the dialog, not shown later.
+    const bool multi_printer = wxGetApp().app_config->get_bool("multi_printer_projects");
+    m_printer_txt->Show(multi_printer);
+    m_printer_choice->Show(multi_printer);
 
     m_bed_type_choice = new ComboBox( this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(240),-1), 0, NULL, wxCB_READONLY );
     auto pm           = wxGetApp().plater()->get_curr_printer_model();
@@ -690,10 +692,6 @@ void PlateSettingsDialog::sync_printer_choices(const std::vector<wxString>& prin
     for (const wxString& name : printers)
         m_printer_choice->Append(name);
     m_printer_choice->SetSelection(std::clamp(selection, 0, int(printers.size())));
-    m_printer_txt->Show();
-    m_printer_choice->Show();
-    Layout();
-    Fit();
 }
 
 int PlateSettingsDialog::get_printer_choice() const

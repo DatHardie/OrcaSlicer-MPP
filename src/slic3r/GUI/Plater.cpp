@@ -7284,6 +7284,7 @@ struct Plater::priv
     int m_active_printer_slot{-1};
     bool multi_printer_enabled() const;
     bool can_leave_printer_slot(int plate_index);
+    bool can_switch_printer_slot(int slot);
     void activate_printer_slot();
     bool assign_plate_printer(int plate_index, const std::string& printer);
     //BBS: add a flag to ignore cancel event
@@ -12931,6 +12932,7 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
                     //reset current plate to the slicing plate
                     int plate_index = this->background_process.get_current_plate()->get_index();
                     this->partplate_list.select_plate(plate_index);
+                    activate_printer_slot();
                 }
             }
             else if (only_has_gcode_need_preview)
@@ -15431,7 +15433,12 @@ bool Plater::priv::multi_printer_enabled() const
 bool Plater::priv::can_leave_printer_slot(int plate_index)
 {
     const PartPlate* target = partplate_list.get_plate(plate_index);
-    if (!multi_printer_enabled() || target == nullptr || target->printer_bed().slot == m_active_printer_slot)
+    return target == nullptr || can_switch_printer_slot(target->printer_bed().slot);
+}
+
+bool Plater::priv::can_switch_printer_slot(int slot)
+{
+    if (!multi_printer_enabled() || slot == m_active_printer_slot)
         return true;
     if (!wxGetApp().has_current_preset_changes())
         return true;
@@ -24191,6 +24198,7 @@ int Plater::select_plate_by_hover_id(int hover_id, bool right_click, bool isModi
         p->partplate_list.update_plates();
         update();
         p->partplate_list.select_plate(0);
+        p->activate_printer_slot();
     }
     else if (action == (int)PartPlate::PLATE_IMEX_MODE_ID)
     {
@@ -24262,11 +24270,15 @@ int Plater::add_plate()
 {
     if (!p->can_add_plate())
         return -1;
+    // A new plate uses the project printer.
+    if (!p->can_switch_printer_slot(-1))
+        return -1;
     take_snapshot("add partplate");
     int new_plate = p->partplate_list.create_plate();
     if (new_plate < 0)
         return new_plate;
     p->partplate_list.select_plate(new_plate);
+    p->activate_printer_slot();
     update();
 
     // BBS set default view
@@ -24298,6 +24310,7 @@ int Plater::delete_plate(int plate_index)
 
     take_snapshot("delete partplate");
     ret = p->partplate_list.delete_plate(index);
+    p->activate_printer_slot();
 
     //BBS: update the current print to the current plate
     p->partplate_list.update_slice_context_to_current_plate(p->background_process);
