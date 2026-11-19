@@ -13,10 +13,10 @@ Works now:
 - Selecting a plate switches to its printer, process and filament presets.
 - Each plate is sliced with its own printer.
 - A new plate takes the printer of the selected plate.
+- The project file stores the printer of each plate and unsaved preset changes.
 
 Planned:
 
-- The project file stores the printer of each plate.
 - Printing sends each plate to its printer.
 - A project view lists the printers of the project, and printers can be added there.
 
@@ -29,7 +29,8 @@ The plates of each printer form one row. Without plates for other printers, Orca
 
 ## Limitations
 
-- A saved project opens with all plates on one printer, because project files do not store the printers yet.
+- Presets of other printers are stored by name. They must exist where the project is opened.
+- Official OrcaSlicer, or this fork with the option off, opens such a project with all plates on one printer.
 - Printing and sending are untested with plates of different printers.
 - Tested on Linux only.
 
