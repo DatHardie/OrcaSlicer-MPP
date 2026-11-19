@@ -1,3 +1,6 @@
+# OrcaSlicer-MultiPrinterProjects
+This Fork of Orca Slicer tries to implement a new Project feature, that is able to combine multiple 3D printers into 1 Project.
+
 <div align="center">
 
 <picture>
