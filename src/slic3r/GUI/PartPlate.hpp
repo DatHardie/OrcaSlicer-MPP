@@ -138,8 +138,9 @@ struct PrinterSlot
 {
     std::string printer;
     std::string print;
+    std::vector<std::string> filaments;
 
-    template<class Archive> void serialize(Archive& ar) { ar(printer, print); }
+    template<class Archive> void serialize(Archive& ar) { ar(printer, print, filaments); }
 };
 
 class PartPlate : public ObjectBase
@@ -980,6 +981,7 @@ public:
 
     // Plates with own printer beds exist.
     bool has_printer_beds() const;
+    Vec2d plate_position(int index) { return compute_shape_position(index, m_plate_cols); }
     // Assign, or clear with slot -1, a bed.
     bool set_plate_printer_bed(int index, PlatePrinterBed bed);
     // New bed for every plate of a slot.
@@ -990,6 +992,7 @@ public:
     // Slot -1 is the project printer.
     PrinterSlot* printer_slot(int slot);
     int find_or_add_printer_slot(const std::string& printer);
+    void clear_printer_slots();
 
     //get the plate stride
     double plate_stride_x();
@@ -1204,7 +1207,8 @@ public:
     {
         //ar(cereal::base_class<ObjectBase>(this));
         //Cancel undo/redo for m_shape ,Because the printing area of different models is different, currently if the grid changes, it cannot correspond to the model on the left ui
-        ar(m_plate_width, m_plate_depth, m_plate_height, m_height_to_lid, m_height_to_rod, m_height_limit_mode, m_plate_count, m_current_plate, m_plate_list, unprintable_plate, m_printer_slots, m_project_printer);
+        // Slots keep their live presets; plates keep slot ids.
+        ar(m_plate_width, m_plate_depth, m_plate_height, m_height_to_lid, m_height_to_rod, m_height_limit_mode, m_plate_count, m_current_plate, m_plate_list, unprintable_plate);
         //ar(m_plate_width, m_plate_depth, m_plate_height, m_plate_count, m_current_plate);
     }
     struct Rect

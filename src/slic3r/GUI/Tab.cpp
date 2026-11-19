@@ -2664,7 +2664,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
     m_page_view->GetParent()->Layout();
 
     // ORCA also update states of plates for plates toolbar. same method exist on Plater::priv::on_select_preset()
-    wxGetApp().plater()->invalidate_plates_for_presets();
+    wxGetApp().plater()->invalidate_plates_for_presets(m_type);
 }
 
 void Tab::show_timelapse_warning_dialog() {
@@ -2868,7 +2868,7 @@ void Tab::on_presets_changed()
     wxGetApp().plater()->update_project_dirty_from_presets();
 
     // ORCA also update states of plates for plates toolbar. same method exist on Plater::priv::on_select_preset()
-    wxGetApp().plater()->invalidate_plates_for_presets();
+    wxGetApp().plater()->invalidate_plates_for_presets(m_type);
 }
 
 void Tab::build_preset_description_line(ConfigOptionsGroup* optgroup)

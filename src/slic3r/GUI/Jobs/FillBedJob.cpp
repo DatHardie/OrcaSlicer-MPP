@@ -38,6 +38,19 @@ namespace Slic3r {
 namespace GUI {
 
 //BBS: add partplate related logic
+// Moves an item by its plate's offset times sign.
+void FillBedJob::shift_from_plate(ArrangePolygon& ap, PartPlateList& plates, int index, int sign) const
+{
+    if (plates.has_printer_beds()) {
+        const Vec2d pos = plates.plate_position(index);
+        ap.translation(X) += sign * scaled<coord_t>(pos.x());
+        ap.translation(Y) += sign * scaled<coord_t>(pos.y());
+        return;
+    }
+    ap.translation(X) += sign * bed_stride_x(m_plater) * ap.col;
+    ap.translation(Y) -= sign * bed_stride_y(m_plater) * ap.row;
+}
+
 void FillBedJob::prepare()
 {
     PartPlateList& plate_list = m_plater->get_partplate_list();
@@ -99,8 +112,7 @@ void FillBedJob::prepare()
                         ap.itemid = m_unselected.size();
                         ap.row = cur_plate_index / plate_cols;
                         ap.col = cur_plate_index % plate_cols;
-                        ap.translation(X) -= bed_stride_x(m_plater) * ap.col;
-                        ap.translation(Y) += bed_stride_y(m_plater) * ap.row;
+                        shift_from_plate(ap, plate_list, cur_plate_index, -1);
                         m_unselected.emplace_back(ap);
                     }
                     else
@@ -119,8 +131,7 @@ void FillBedJob::prepare()
                     ap.itemid = m_unselected.size();
                     ap.row = cur_plate_index / plate_cols;
                     ap.col = cur_plate_index % plate_cols;
-                    ap.translation(X) -= bed_stride_x(m_plater) * ap.col;
-                    ap.translation(Y) += bed_stride_y(m_plater) * ap.row;
+                    shift_from_plate(ap, plate_list, cur_plate_index, -1);
                     m_unselected.emplace_back(ap);
                 }
                 else
@@ -378,8 +389,7 @@ void FillBedJob::finalize(bool canceled, std::exception_ptr &eptr)
             if (m_selected.size() <= 100) {
                 ap.row = ap.bed_idx / plate_cols;
                 ap.col = ap.bed_idx % plate_cols;
-                ap.translation(X) += bed_stride_x(m_plater) * ap.col;
-                ap.translation(Y) -= bed_stride_y(m_plater) * ap.row;
+                shift_from_plate(ap, plate_list, ap.bed_idx, 1);
             }
 
             ap.apply();

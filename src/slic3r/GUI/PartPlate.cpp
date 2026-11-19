@@ -6463,8 +6463,6 @@ void PartPlateList::clear(bool delete_plates, bool release_print_list, bool exce
 void PartPlateList::reset(bool do_init)
 {
 	clear(true, false);
-	m_printer_slots.clear();
-	m_project_printer = PrinterSlot{};
 
 	//m_plate_list.clear();
 
@@ -7153,6 +7151,13 @@ bool PartPlateList::set_slot_printer_bed(int slot, PlatePrinterBed bed)
 void PartPlateList::refresh_printer_rows()
 {
 	apply_printer_beds(false);
+}
+
+// Undo resets plates but keeps slots.
+void PartPlateList::clear_printer_slots()
+{
+	m_printer_slots.clear();
+	m_project_printer = PrinterSlot{};
 }
 
 PrinterSlot* PartPlateList::printer_slot(int slot)

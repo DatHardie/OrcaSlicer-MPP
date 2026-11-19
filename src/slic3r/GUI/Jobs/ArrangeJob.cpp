@@ -647,6 +647,9 @@ void ArrangeJob::prepare()
     Model::setPrintSpeedTable(config, print_config);
 
     int state = m_plater->get_prepare_state();
+    // Plates of other printers have other beds.
+    if (state == Job::JobPrepareState::PREPARE_STATE_DEFAULT && m_plater->get_partplate_list().has_printer_beds())
+        state = Job::JobPrepareState::PREPARE_STATE_MENU;
     if (state == Job::JobPrepareState::PREPARE_STATE_DEFAULT) {
         only_on_partplate = false;
         prepare_all();

@@ -7283,7 +7283,8 @@ struct Plater::priv
     // Printer slot whose presets are active.
     int m_active_printer_slot{-1};
     bool m_switching_printer_slot{false};
-    void invalidate_plates_for_presets();
+    void invalidate_plates_for_presets(Preset::Type type);
+    void update_model_print_params();
     bool multi_printer_enabled() const;
     bool can_leave_printer_slot(int plate_index);
     bool can_switch_printer_slot(int slot);
@@ -11151,6 +11152,7 @@ void Plater::priv::reset(bool apply_presets_change, bool reload_presets)
 
     clear_warnings();
     m_active_printer_slot = -1;
+    partplate_list.clear_printer_slots();
 
     const std::string closed_project_name = into_u8(get_project_filename());
     if (!closed_project_name.empty() || !model.objects.empty()) {
@@ -13474,7 +13476,7 @@ void Plater::priv::on_select_preset(wxCommandEvent &evt)
     Slic3r::put_other_changes();
 
     // update slice state and set bedtype default for 3rd-party printer
-    invalidate_plates_for_presets();
+    invalidate_plates_for_presets(preset_type);
 }
 
 void Plater::priv::on_slicing_update(SlicingStatusEvent &evt)
@@ -13868,6 +13870,8 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
 
         q->Freeze();
         q->select_plate(m_cur_slice_plate);
+        if (multi_printer_enabled() && partplate_list.has_printer_beds())
+            update_model_print_params();
         partplate_list.select_plate_view();
         int ret = q->start_next_slice();
         if (ret) {
@@ -15473,8 +15477,9 @@ void Plater::priv::activate_printer_slot()
 
     PresetBundle& bundle = *wxGetApp().preset_bundle;
     if (PrinterSlot* leaving = partplate_list.printer_slot(m_active_printer_slot)) {
-        leaving->printer = bundle.printers.get_selected_preset_name();
-        leaving->print   = bundle.prints.get_selected_preset_name();
+        leaving->printer   = bundle.printers.get_selected_preset_name();
+        leaving->print     = bundle.prints.get_selected_preset_name();
+        leaving->filaments = bundle.filament_presets;
     }
     const PrinterSlot* entering = partplate_list.printer_slot(slot);
     if (entering == nullptr || entering->printer.empty()) {
@@ -15497,6 +15502,17 @@ void Plater::priv::activate_printer_slot()
     }
     if (!entering->print.empty() && bundle.prints.get_selected_preset_name() != entering->print)
         wxGetApp().get_tab(Preset::TYPE_PRINT)->select_preset(entering->print, false, "", false, true);
+    // Filament slots stay, their presets follow the slot.
+    bool filaments_changed = false;
+    for (size_t i = 0; i < std::min(entering->filaments.size(), bundle.filament_presets.size()); ++i) {
+        const std::string& name = entering->filaments[i];
+        if (bundle.filament_presets[i] != name && bundle.filaments.find_preset(name, false) != nullptr) {
+            bundle.set_filament_preset(i, name);
+            filaments_changed = true;
+        }
+    }
+    if (filaments_changed)
+        wxGetApp().load_current_presets(false);
     q->on_config_change(bundle.full_config());
 }
 
@@ -15527,19 +15543,45 @@ bool Plater::priv::assign_plate_printer(int plate_index, const std::string& prin
     return partplate_list.set_plate_printer_bed(plate_index, std::move(bed));
 }
 
-void Plater::priv::invalidate_plates_for_presets()
+void Plater::priv::invalidate_plates_for_presets(Preset::Type type)
 {
     if (m_switching_printer_slot)
         return;
     const bool multi = multi_printer_enabled();
-    for (PartPlate* plate : partplate_list.get_plate_list())
-        if (!multi || plate->printer_bed().slot == m_active_printer_slot)
+    const PresetBundle& bundle = *wxGetApp().preset_bundle;
+    // Other slots sharing the changed preset are stale too.
+    auto shares_preset = [&](int slot) {
+        const PrinterSlot* other = partplate_list.printer_slot(slot);
+        if (other == nullptr)
+            return false;
+        if (type == Preset::TYPE_PRINT)
+            return other->print == bundle.prints.get_selected_preset_name();
+        if (type == Preset::TYPE_FILAMENT)
+            return std::any_of(other->filaments.begin(), other->filaments.end(), [&bundle](const std::string& name) {
+                return std::find(bundle.filament_presets.begin(), bundle.filament_presets.end(), name) != bundle.filament_presets.end();
+            });
+        return false;
+    };
+    for (PartPlate* plate : partplate_list.get_plate_list()) {
+        const int slot = plate->printer_bed().slot;
+        if (!multi || slot == m_active_printer_slot || shares_preset(slot))
             plate->update_slice_result_valid_state(false);
+    }
 }
 
-void Plater::invalidate_plates_for_presets()
+void Plater::invalidate_plates_for_presets(Preset::Type type)
 {
-    p->invalidate_plates_for_presets();
+    p->invalidate_plates_for_presets(type);
+}
+
+// Brim uses these per print.
+void Plater::priv::update_model_print_params()
+{
+    const DynamicPrintConfig& config = wxGetApp().preset_bundle->full_config();
+    auto& print = partplate_list.get_current_fff_print();
+    auto print_config = print.config();
+    Model::setExtruderParams(config, wxGetApp().preset_bundle->filament_presets.size());
+    Model::setPrintSpeedTable(config, print_config);
 }
 
 bool Plater::priv::can_delete() const

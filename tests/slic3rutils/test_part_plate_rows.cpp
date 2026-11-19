@@ -218,15 +218,25 @@ TEST_CASE("Invalid slot beds are rejected", "[PartPlateRows]")
     CHECK(f.plates.get_plate(1)->get_size() == Vec2d(120., 120.));
 }
 
-TEST_CASE("Resetting the plate list forgets printer slots", "[PartPlateRows]")
+TEST_CASE("Resetting the plates keeps printer slots for undo", "[PartPlateRows]")
 {
     PlateFixture f(2);
     REQUIRE(f.plates.set_plate_printer_bed(1, small_bed(0)));
     f.plates.printer_slot(-1)->printer = "Voron 2.4";
     f.plates.reset(true);
+    CHECK_FALSE(f.plates.has_printer_beds());
+    CHECK(f.plates.printer_slots().size() == 2);
+    CHECK(f.plates.printer_slot(-1)->printer == "Voron 2.4");
+}
+
+TEST_CASE("Clearing printer slots forgets them", "[PartPlateRows]")
+{
+    PlateFixture f(2);
+    f.plates.printer_slot(-1)->printer = "Voron 2.4";
+    f.plates.clear_printer_slots();
     CHECK(f.plates.printer_slots().empty());
     CHECK(f.plates.printer_slot(-1)->printer.empty());
-    CHECK_FALSE(f.plates.has_printer_beds());
+    CHECK(f.plates.printer_slot(0) == nullptr);
 }
 
 TEST_CASE("A plate's own bed survives an undo snapshot round trip", "[PartPlateRows]")
@@ -237,7 +247,7 @@ TEST_CASE("A plate's own bed survives an undo snapshot round trip", "[PartPlateR
     std::stringstream data;
     {
         cereal::BinaryOutputArchive out(data);
-        out(bed, PrinterSlot{"Trident", "0.20mm Standard"});
+        out(bed, PrinterSlot{"Trident", "0.20mm Standard", {"Generic PLA", "Generic PETG"}});
     }
     PlatePrinterBed loaded;
     PrinterSlot     slot;
@@ -252,6 +262,7 @@ TEST_CASE("A plate's own bed survives an undo snapshot round trip", "[PartPlateR
     CHECK(loaded.height_to_lid == 20.f);
     CHECK(slot.printer == "Trident");
     CHECK(slot.print == "0.20mm Standard");
+    CHECK(slot.filaments == std::vector<std::string>{"Generic PLA", "Generic PETG"});
 }
 
 TEST_CASE("Reapplying a slot's unchanged bed keeps slice results", "[PartPlateRows]")
