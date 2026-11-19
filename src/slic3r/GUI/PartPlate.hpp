@@ -17,7 +17,6 @@
 #include <cstddef>
 #include <cereal/access.hpp>
 #include <cereal/specialize.hpp>
-#include <cereal/types/string.hpp>
 #include <cereal/types/vector.hpp>
 #include <vector>
 #include <set>
@@ -146,10 +145,6 @@ struct PrinterSlot
     std::string changed_filament;
 
     bool has_changes() const { return !printer_changes.empty() || !print_changes.empty() || !filament_changes.empty(); }
-    template<class Archive> void serialize(Archive& ar)
-    {
-        ar(printer, print, filaments, printer_changes, print_changes, filament_changes, changed_filament);
-    }
 };
 
 class PartPlate : public ObjectBase
@@ -901,6 +896,10 @@ class PartPlateList : public ObjectBase
 
     int m_filament_count = 1;
 
+    std::vector<PrinterSlot> m_printer_slots;
+    PrinterSlot m_project_printer;
+    PlatePrinterBed m_new_plate_bed;
+
     void init();
     //compute the origin for printable plate with index i
     Vec3d compute_origin(int index, int column_count);
@@ -911,9 +910,6 @@ class PartPlateList : public ObjectBase
     Vec2d printer_row_position(int index) const;
     static bool valid_printer_bed(const PlatePrinterBed& bed);
     void apply_printer_beds(bool move_instances);
-    std::vector<PrinterSlot> m_printer_slots;
-    PrinterSlot m_project_printer;
-    PlatePrinterBed m_new_plate_bed;
     int plate_bed_width(const PartPlate& plate) const;
     int plate_bed_depth(const PartPlate& plate) const;
     double plate_bed_height(const PartPlate& plate) const;

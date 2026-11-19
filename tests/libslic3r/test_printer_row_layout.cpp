@@ -1,12 +1,14 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
-#include <cmath>
+#include <cstddef>
 #include <limits>
 #include <stdexcept>
 #include <vector>
 
+#include "libslic3r/Point.hpp"
 #include "libslic3r/PrinterRowLayout.hpp"
 
 using namespace Slic3r;

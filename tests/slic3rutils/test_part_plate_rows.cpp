@@ -1,14 +1,20 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <cstddef>
 #include <limits>
 #include <sstream>
+#include <string>
+#include <vector>
 
 #include <cereal/archives/binary.hpp>
 
+#include "libslic3r/Config.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Point.hpp"
+#include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 
@@ -40,6 +46,21 @@ struct PlateFixture
 
     Vec2d origin(int index) { return plates.get_plate(index)->get_origin().head<2>(); }
 };
+
+void check_size(const PartPlate* plate, double width, double depth)
+{
+    CHECK_THAT(plate->get_size().x(), WithinAbs(width, 1e-6));
+    CHECK_THAT(plate->get_size().y(), WithinAbs(depth, 1e-6));
+}
+
+void check_points(const Pointfs& actual, const Pointfs& expected)
+{
+    REQUIRE(actual.size() == expected.size());
+    for (size_t i = 0; i < actual.size(); ++i) {
+        CHECK_THAT(actual[i].x(), WithinAbs(expected[i].x(), 1e-9));
+        CHECK_THAT(actual[i].y(), WithinAbs(expected[i].y(), 1e-9));
+    }
+}
 
 PlatePrinterBed small_bed(int slot)
 {
@@ -79,8 +100,8 @@ TEST_CASE("A plate with its own bed moves to its printer row", "[PartPlateRows]"
     CHECK_THAT(f.origin(1).y(), WithinAbs(-(120. + gap * project_size), 1e-6));
 
     const PartPlate* own = f.plates.get_plate(1);
-    CHECK(own->get_size() == Vec2d(120., 120.));
-    CHECK(f.plates.get_plate(0)->get_size() == Vec2d(project_size, project_size));
+    check_size(own, 120., 120.);
+    check_size(f.plates.get_plate(0), project_size, project_size);
 }
 
 TEST_CASE("Objects move with their plate into the row layout", "[PartPlateRows]")
@@ -110,7 +131,7 @@ TEST_CASE("Clearing the last own bed restores the legacy grid", "[PartPlateRows]
     CHECK_FALSE(f.plates.has_printer_beds());
     CHECK_THAT(f.origin(2).x(), WithinAbs(legacy.x(), 1e-6));
     CHECK_THAT(f.origin(2).y(), WithinAbs(legacy.y(), 1e-6));
-    CHECK(f.plates.get_plate(1)->get_size() == Vec2d(project_size, project_size));
+    check_size(f.plates.get_plate(1), project_size, project_size);
 }
 
 TEST_CASE("A new plate joins the project printer row", "[PartPlateRows]")
@@ -198,11 +219,11 @@ TEST_CASE("A slot's new bed reaches all its plates", "[PartPlateRows]")
     REQUIRE(f.plates.set_slot_printer_bed(0, bigger));
 
     for (int i : {1, 2}) {
-        CHECK(f.plates.get_plate(i)->get_size() == Vec2d(180., 180.));
+        check_size(f.plates.get_plate(i), 180., 180.);
         CHECK(f.plates.get_plate(i)->printer_bed().slot == 0);
         CHECK_THAT(f.plates.get_plate(i)->printer_bed().height, WithinAbs(170., 1e-9));
     }
-    CHECK(f.plates.get_plate(0)->get_size() == Vec2d(project_size, project_size));
+    check_size(f.plates.get_plate(0), project_size, project_size);
     CHECK_THAT(f.origin(2).x(), WithinAbs(180. * (1. + gap), 1e-6));
 }
 
@@ -215,7 +236,7 @@ TEST_CASE("Invalid slot beds are rejected", "[PartPlateRows]")
     CHECK_FALSE(f.plates.set_slot_printer_bed(0, bad));
     CHECK_FALSE(f.plates.set_slot_printer_bed(-1, small_bed(0)));
     CHECK_FALSE(f.plates.set_slot_printer_bed(7, small_bed(0)));
-    CHECK(f.plates.get_plate(1)->get_size() == Vec2d(120., 120.));
+    check_size(f.plates.get_plate(1), 120., 120.);
 }
 
 TEST_CASE("Resetting the plates keeps printer slots for undo", "[PartPlateRows]")
@@ -247,22 +268,18 @@ TEST_CASE("A plate's own bed survives an undo snapshot round trip", "[PartPlateR
     std::stringstream data;
     {
         cereal::BinaryOutputArchive out(data);
-        out(bed, PrinterSlot{"Trident", "0.20mm Standard", {"Generic PLA", "Generic PETG"}});
+        out(bed);
     }
     PlatePrinterBed loaded;
-    PrinterSlot     slot;
     {
         cereal::BinaryInputArchive in(data);
-        in(loaded, slot);
+        in(loaded);
     }
     CHECK(loaded.slot == 1);
-    CHECK(loaded.shape == bed.shape);
-    CHECK(loaded.exclude_areas == bed.exclude_areas);
+    check_points(loaded.shape, bed.shape);
+    check_points(loaded.exclude_areas, bed.exclude_areas);
     CHECK_THAT(loaded.height, WithinAbs(115., 1e-9));
-    CHECK(loaded.height_to_lid == 20.f);
-    CHECK(slot.printer == "Trident");
-    CHECK(slot.print == "0.20mm Standard");
-    CHECK(slot.filaments == std::vector<std::string>{"Generic PLA", "Generic PETG"});
+    CHECK_THAT(loaded.height_to_lid, WithinAbs(20., 1e-6));
 }
 
 TEST_CASE("Reapplying a slot's unchanged bed keeps slice results", "[PartPlateRows]")
@@ -281,7 +298,7 @@ TEST_CASE("Reapplying a slot's unchanged bed keeps slice results", "[PartPlateRo
     clearance.exclude_areas   = square(5.);
     REQUIRE(f.plates.set_slot_printer_bed(0, clearance));
     CHECK(f.plates.get_plate(1)->is_slice_result_valid());
-    CHECK(f.plates.get_plate(1)->printer_bed().height_to_lid == 30.f);
+    CHECK_THAT(f.plates.get_plate(1)->printer_bed().height_to_lid, WithinAbs(30., 1e-6));
 
     PlatePrinterBed taller = small_bed(0);
     taller.height          = 200.;
@@ -297,7 +314,7 @@ TEST_CASE("Plates created with a bed template join that printer's row", "[PartPl
     const int index = f.plates.create_plate(false);
     REQUIRE(index == 2);
     CHECK(f.plates.get_plate(2)->printer_bed().slot == 0);
-    CHECK(f.plates.get_plate(2)->get_size() == Vec2d(120., 120.));
+    check_size(f.plates.get_plate(2), 120., 120.);
     CHECK_THAT(f.origin(2).x(), WithinAbs(120. * (1. + gap), 1e-6));
     CHECK_THAT(f.origin(2).y(), WithinAbs(f.origin(1).y(), 1e-6));
 
@@ -307,26 +324,17 @@ TEST_CASE("Plates created with a bed template join that printer's row", "[PartPl
     CHECK_FALSE(f.plates.get_plate(3)->printer_bed().assigned());
 }
 
-TEST_CASE("A slot keeps unsaved preset changes", "[PartPlateRows]")
+TEST_CASE("A slot reports stored preset changes of any kind", "[PartPlateRows]")
 {
     PrinterSlot slot{"Trident", "0.20mm Standard", {"Generic PLA"}};
-    CHECK_FALSE(slot.has_changes());
-    slot.print_changes.set_key_value("layer_height", new ConfigOptionFloat(0.3));
+    // A filament name alone is no change.
     slot.changed_filament = "Generic PLA";
-    CHECK(slot.has_changes());
+    CHECK_FALSE(slot.has_changes());
 
-    std::stringstream data;
-    {
-        cereal::BinaryOutputArchive out(data);
-        out(slot);
-    }
-    PrinterSlot loaded;
-    {
-        cereal::BinaryInputArchive in(data);
-        in(loaded);
-    }
-    CHECK(loaded.has_changes());
-    CHECK_THAT(loaded.print_changes.opt_float("layer_height"), WithinAbs(0.3, 1e-9));
-    CHECK(loaded.printer_changes.empty());
-    CHECK(loaded.changed_filament == "Generic PLA");
+    const int kind = GENERATE(0, 1, 2);
+    DynamicPrintConfig& changes = kind == 0 ? slot.printer_changes : kind == 1 ? slot.print_changes : slot.filament_changes;
+    changes.set_key_value("layer_height", new ConfigOptionFloat(0.3));
+    CHECK(slot.has_changes());
+    changes.clear();
+    CHECK_FALSE(slot.has_changes());
 }

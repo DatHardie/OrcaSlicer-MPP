@@ -1,7 +1,9 @@
 #include "libslic3r/PrinterRowLayout.hpp"
+#include "libslic3r/Point.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <map>
 #include <stdexcept>
 #include <vector>

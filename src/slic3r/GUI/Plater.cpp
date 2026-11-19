@@ -23457,9 +23457,8 @@ int Plater::select_plate(int plate_index, bool need_slice)
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: plate %2%, need_slice %3% ")%__LINE__ %plate_index  %need_slice;
     take_snapshot("select partplate!");
     ret = p->partplate_list.select_plate(plate_index);
-    if (!ret)
-        p->activate_printer_slot();
     if (!ret) {
+        p->activate_printer_slot();
         if (is_view3D_shown())
             wxGetApp().plater()->canvas3D()->render();
     }
