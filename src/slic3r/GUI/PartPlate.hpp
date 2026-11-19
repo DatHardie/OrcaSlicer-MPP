@@ -17,6 +17,8 @@
 #include <cstddef>
 #include <cereal/access.hpp>
 #include <cereal/specialize.hpp>
+#include <cereal/types/string.hpp>
+#include <cereal/types/vector.hpp>
 #include <vector>
 #include <set>
 #include <map>
@@ -118,6 +120,20 @@ struct PlatePrinterBed
     float                height_to_rod{0.f};
 
     bool assigned() const { return slot >= 0; }
+
+    template<class Archive> void serialize(Archive& ar)
+    {
+        ar(slot, shape, exclude_areas, extruder_areas, extruder_heights, height, height_to_lid, height_to_rod);
+    }
+};
+
+// Presets a printer slot selects when active.
+struct PrinterSlot
+{
+    std::string printer;
+    std::string print;
+
+    template<class Archive> void serialize(Archive& ar) { ar(printer, print); }
 };
 
 class PartPlate : public ObjectBase
@@ -769,7 +785,7 @@ public:
         std::vector<std::pair<int, int>>	objects_and_instances;
         std::vector<std::pair<int, int>>	instances_outside;
 
-        ar(m_plate_index, m_name, m_print_index, m_origin, m_width, m_depth, m_height, m_locked, m_selected, m_ready_for_slice, m_slice_result_valid, m_apply_invalid, m_printable, m_tmp_gcode_path, objects_and_instances, instances_outside, m_config);
+        ar(m_plate_index, m_name, m_print_index, m_origin, m_width, m_depth, m_height, m_locked, m_selected, m_ready_for_slice, m_slice_result_valid, m_apply_invalid, m_printable, m_tmp_gcode_path, objects_and_instances, instances_outside, m_config, m_printer_bed);
 
         for (std::vector<std::pair<int, int>>::iterator it = objects_and_instances.begin(); it != objects_and_instances.end(); ++it)
             obj_to_instance_set.insert(std::pair(it->first, it->second));
@@ -789,7 +805,7 @@ public:
         for (std::set<std::pair<int, int>>::iterator it = obj_to_instance_set.begin(); it != obj_to_instance_set.end(); ++it)
             objects_and_instances.emplace_back(it->first, it->second);
 
-        ar(m_plate_index, m_name, m_print_index, m_origin, m_width, m_depth, m_height, m_locked, m_selected, m_ready_for_slice, m_slice_result_valid, m_apply_invalid, m_printable, m_tmp_gcode_path, objects_and_instances, instances_outside, m_config);
+        ar(m_plate_index, m_name, m_print_index, m_origin, m_width, m_depth, m_height, m_locked, m_selected, m_ready_for_slice, m_slice_result_valid, m_apply_invalid, m_printable, m_tmp_gcode_path, objects_and_instances, instances_outside, m_config, m_printer_bed);
     }
     /*template<class Archive> void serialize(Archive& ar)
     {
@@ -877,6 +893,10 @@ class PartPlateList : public ObjectBase
     //compute shape position
     Vec2d compute_shape_position(int index, int cols);
     Vec2d printer_row_position(int index) const;
+    static bool valid_printer_bed(const PlatePrinterBed& bed);
+    void apply_printer_beds(bool move_instances);
+    std::vector<PrinterSlot> m_printer_slots;
+    PrinterSlot m_project_printer;
     int plate_bed_width(const PartPlate& plate) const;
     int plate_bed_depth(const PartPlate& plate) const;
     double plate_bed_height(const PartPlate& plate) const;
@@ -956,6 +976,14 @@ public:
     bool has_printer_beds() const;
     // Assign, or clear with slot -1, a bed.
     bool set_plate_printer_bed(int index, PlatePrinterBed bed);
+    // New bed for every plate of a slot.
+    bool set_slot_printer_bed(int slot, PlatePrinterBed bed);
+    // Recompute row positions and shapes, objects stay.
+    void refresh_printer_rows();
+    const std::vector<PrinterSlot>& printer_slots() const { return m_printer_slots; }
+    // Slot -1 is the project printer.
+    PrinterSlot* printer_slot(int slot);
+    int find_or_add_printer_slot(const std::string& printer);
 
     //get the plate stride
     double plate_stride_x();
@@ -1170,7 +1198,7 @@ public:
     {
         //ar(cereal::base_class<ObjectBase>(this));
         //Cancel undo/redo for m_shape ,Because the printing area of different models is different, currently if the grid changes, it cannot correspond to the model on the left ui
-        ar(m_plate_width, m_plate_depth, m_plate_height, m_height_to_lid, m_height_to_rod, m_height_limit_mode, m_plate_count, m_current_plate, m_plate_list, unprintable_plate);
+        ar(m_plate_width, m_plate_depth, m_plate_height, m_height_to_lid, m_height_to_rod, m_height_limit_mode, m_plate_count, m_current_plate, m_plate_list, unprintable_plate, m_printer_slots, m_project_printer);
         //ar(m_plate_width, m_plate_depth, m_plate_height, m_plate_count, m_current_plate);
     }
     struct Rect

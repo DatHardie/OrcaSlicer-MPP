@@ -7280,6 +7280,12 @@ struct Plater::priv
     Camera camera;
     //BBS: partplate related structure
     PartPlateList partplate_list;
+    // Printer slot whose presets are active.
+    int m_active_printer_slot{-1};
+    bool multi_printer_enabled() const;
+    bool can_leave_printer_slot(int plate_index);
+    void activate_printer_slot();
+    bool assign_plate_printer(int plate_index, const std::string& printer);
     //BBS: add a flag to ignore cancel event
     bool m_ignore_event{false};
     bool m_slice_all{false};
@@ -11140,6 +11146,7 @@ void Plater::priv::reset(bool apply_presets_change, bool reload_presets)
     Plater::TakeSnapshot snapshot(q, _u8L("Reset Project"), UndoRedo::SnapshotType::ProjectSeparator);
 
     clear_warnings();
+    m_active_printer_slot = -1;
 
     const std::string closed_project_name = into_u8(get_project_filename());
     if (!closed_project_name.empty() || !model.objects.empty()) {
@@ -15361,6 +15368,25 @@ void Plater::priv::set_bed_shape(const Pointfs       &shape,
     else
         SCALING_FACTOR = SCALING_FACTOR_INTERNAL_LARGE_PRINTER;
 
+    // The active slot's printer owns this bed.
+    if (multi_printer_enabled() && m_active_printer_slot >= 0) {
+        PlatePrinterBed slot_bed;
+        slot_bed.shape            = shape;
+        slot_bed.exclude_areas    = exclude_areas;
+        slot_bed.extruder_areas   = extruder_areas;
+        slot_bed.extruder_heights = extruder_heights;
+        slot_bed.height           = printable_height;
+        slot_bed.height_to_lid    = float(config->opt_float("extruder_clearance_height_to_lid"));
+        slot_bed.height_to_rod    = float(config->opt_float("extruder_clearance_height_to_rod"));
+        partplate_list.set_slot_printer_bed(m_active_printer_slot, std::move(slot_bed));
+        if (bed.set_shape(shape, printable_height, extruder_areas, extruder_heights, custom_model, force_as_custom,
+                          partplate_list.get_current_shape_position())) {
+            if (view3D) view3D->bed_shape_changed();
+            if (preview) preview->bed_shape_changed();
+        }
+        return;
+    }
+
     //BBS: add shape position
     Vec2d shape_position = partplate_list.get_current_shape_position();
     bool new_shape = bed.set_shape(shape, printable_height, extruder_areas, extruder_heights, custom_model, force_as_custom, shape_position);
@@ -15395,6 +15421,84 @@ void Plater::priv::set_bed_shape(const Pointfs       &shape,
         if (shape_position != new_shape_position)
             bed.set_shape(shape, printable_height, extruder_areas, extruder_heights, custom_model, force_as_custom, new_shape_position);
     }
+}
+
+bool Plater::priv::multi_printer_enabled() const
+{
+    return wxGetApp().app_config->get_bool("multi_printer_projects");
+}
+
+bool Plater::priv::can_leave_printer_slot(int plate_index)
+{
+    const PartPlate* target = partplate_list.get_plate(plate_index);
+    if (!multi_printer_enabled() || target == nullptr || target->printer_bed().slot == m_active_printer_slot)
+        return true;
+    if (!wxGetApp().has_current_preset_changes())
+        return true;
+    return wxGetApp().check_and_keep_current_preset_changes(_L("Switch printer"),
+        _L("This plate uses another printer. Save or discard the changes to the current presets first."),
+        ActionButtons::SAVE);
+}
+
+void Plater::priv::activate_printer_slot()
+{
+    if (!multi_printer_enabled())
+        return;
+    const int slot = partplate_list.get_curr_plate()->printer_bed().slot;
+    if (slot == m_active_printer_slot)
+        return;
+
+    PresetBundle& bundle = *wxGetApp().preset_bundle;
+    if (PrinterSlot* leaving = partplate_list.printer_slot(m_active_printer_slot)) {
+        leaving->printer = bundle.printers.get_selected_preset_name();
+        leaving->print   = bundle.prints.get_selected_preset_name();
+    }
+    const PrinterSlot* entering = partplate_list.printer_slot(slot);
+    if (entering == nullptr || entering->printer.empty()) {
+        m_active_printer_slot = slot;
+        return;
+    }
+
+    const int previous    = m_active_printer_slot;
+    m_active_printer_slot = slot;
+    if (bundle.printers.get_selected_preset_name() != entering->printer)
+        wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(entering->printer, false, "", false, true);
+    if (bundle.printers.get_selected_preset_name() != entering->printer) {
+        // Keep the bed with the printer still active.
+        m_active_printer_slot = previous;
+        show_error(q, format_wxstr(_L("The printer preset \"%1%\" of this plate is not available."), entering->printer));
+        return;
+    }
+    if (!entering->print.empty() && bundle.prints.get_selected_preset_name() != entering->print)
+        wxGetApp().get_tab(Preset::TYPE_PRINT)->select_preset(entering->print, false, "", false, true);
+    q->on_config_change(bundle.full_config());
+}
+
+bool Plater::priv::assign_plate_printer(int plate_index, const std::string& printer)
+{
+    PresetBundle& bundle = *wxGetApp().preset_bundle;
+    if (printer.empty())
+        return partplate_list.set_plate_printer_bed(plate_index, PlatePrinterBed{});
+
+    const Preset* preset = bundle.printers.find_preset(printer, false);
+    if (preset == nullptr || preset->name != printer || preset->printer_technology() != ptFFF)
+        return false;
+    const DynamicPrintConfig& config = preset->config;
+    const auto* area   = config.option<ConfigOptionPoints>("printable_area");
+    const auto* height = config.option<ConfigOptionFloat>("printable_height");
+    if (area == nullptr || height == nullptr)
+        return false;
+    PlatePrinterBed bed;
+    bed.shape  = make_counter_clockwise(area->values);
+    bed.height = height->value;
+    if (const auto* opt = config.option<ConfigOptionPoints>("bed_exclude_area"))
+        bed.exclude_areas = opt->values;
+    if (const auto* opt = config.option<ConfigOptionPointsGroups>("extruder_printable_area"))
+        bed.extruder_areas = opt->values;
+    if (const auto* opt = config.option<ConfigOptionFloatsNullable>("extruder_printable_height"))
+        bed.extruder_heights = opt->values;
+    bed.slot = partplate_list.find_or_add_printer_slot(printer);
+    return partplate_list.set_plate_printer_bed(plate_index, std::move(bed));
 }
 
 bool Plater::priv::can_delete() const
@@ -15830,6 +15934,10 @@ void Plater::priv::undo_redo_to(std::vector<UndoRedo::Snapshot>::const_iterator 
     if (it_snapshot->timestamp < this->undo_redo_stack().active_snapshot_time() ?
         this->undo_redo_stack().undo(model, get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_selection() : this->view3D->get_canvas3d()->get_selection(), get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_gizmos_manager() : this->view3D->get_canvas3d()->get_gizmos_manager(), this->partplate_list, top_snapshot_data, it_snapshot->timestamp) :
         this->undo_redo_stack().redo(model, get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_gizmos_manager() : this->view3D->get_canvas3d()->get_gizmos_manager(), this->partplate_list, it_snapshot->timestamp)) {
+        if (partplate_list.has_printer_beds() || m_active_printer_slot >= 0) {
+            partplate_list.refresh_printer_rows();
+            wxGetApp().CallAfter([this]() { activate_printer_slot(); });
+        }
         if (printer_technology_changed) {
             // Switch to the other printer technology. Switch to the last printer active for that particular technology.
             AppConfig *app_config = wxGetApp().app_config;
@@ -23194,8 +23302,12 @@ int Plater::select_plate(int plate_index, bool need_slice)
 {
     int ret;
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: plate %2%, need_slice %3% ")%__LINE__ %plate_index  %need_slice;
+    if (!p->can_leave_printer_slot(plate_index))
+        return -1;
     take_snapshot("select partplate!");
     ret = p->partplate_list.select_plate(plate_index);
+    if (!ret)
+        p->activate_printer_slot();
     if (!ret) {
         if (is_view3D_shown())
             wxGetApp().plater()->canvas3D()->render();
@@ -23720,6 +23832,22 @@ void Plater::open_platesettings_dialog(wxCommandEvent& evt) {
 
     dlg.sync_spiral_mode(curr_plate->get_spiral_vase_mode(), !curr_plate->has_spiral_mode_config());
 
+    std::vector<std::string> printer_names;
+    if (p->multi_printer_enabled()) {
+        std::vector<wxString> labels;
+        int selection = 0;
+        const PrinterSlot* slot = p->partplate_list.printer_slot(curr_plate->printer_bed().slot);
+        for (const Preset& preset : wxGetApp().preset_bundle->printers) {
+            if (!preset.is_visible || preset.is_default || preset.printer_technology() != ptFFF)
+                continue;
+            printer_names.push_back(preset.name);
+            labels.push_back(from_u8(preset.label(false)));
+            if (curr_plate->printer_bed().assigned() && slot && slot->printer == preset.name)
+                selection = int(printer_names.size());
+        }
+        dlg.sync_printer_choices(labels, selection);
+    }
+
     dlg.Bind(EVT_SET_BED_TYPE_CONFIRM, [this, plate_index, &dlg](wxCommandEvent& e) {
         PartPlate* curr_plate = p->partplate_list.get_curr_plate();
         BedType old_bed_type = curr_plate->get_bed_type();
@@ -23768,8 +23896,25 @@ void Plater::open_platesettings_dialog(wxCommandEvent& evt) {
         });
     dlg.set_plate_name(from_u8(curr_plate->get_plate_name()));
 
-    dlg.ShowModal();
+    const int old_printer_choice = dlg.get_printer_choice();
+    const int result = dlg.ShowModal();
     rename_plate(p->partplate_list.get_curr_plate_index(), dlg.get_plate_name().ToUTF8().data());
+
+    const int printer_choice = dlg.get_printer_choice();
+    if (result != wxID_YES || printer_choice == wxNOT_FOUND || printer_choice == old_printer_choice)
+        return;
+    const std::string printer = printer_choice == 0 ? std::string() : printer_names.at(printer_choice - 1);
+    const int plate = p->partplate_list.get_curr_plate_index();
+    if (!p->can_leave_printer_slot(plate))
+        return;
+    take_snapshot("change plate printer");
+    if (!p->assign_plate_printer(plate, printer)) {
+        show_error(this, _L("The selected printer cannot be used for this plate."));
+        return;
+    }
+    p->activate_printer_slot();
+    set_plater_dirty(true);
+    update();
 }
 
 void Plater::open_filament_map_setting_dialog(wxCommandEvent &evt)
@@ -23852,8 +23997,11 @@ int Plater::select_plate_by_hover_id(int hover_id, bool right_click, bool isModi
     if (action == 0)
     {
         //select plate
+        if (!p->can_leave_printer_slot(plate_index))
+            return -1;
         ret = p->partplate_list.select_plate(plate_index);
         if (!ret) {
+            p->activate_printer_slot();
             SimpleEvent event(EVT_GLCANVAS_PLATE_SELECT);
             p->on_plate_selected(event);
         }

@@ -3,6 +3,9 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <limits>
+#include <sstream>
+
+#include <cereal/archives/binary.hpp>
 
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Point.hpp"
@@ -31,6 +34,8 @@ struct PlateFixture
         plates.set_shapes(square(project_size), {}, {}, {}, {}, {}, 0.f, 0.f);
         for (int i = 1; i < count; ++i)
             plates.create_plate();
+        plates.find_or_add_printer_slot("Voron 0.2");
+        plates.find_or_add_printer_slot("Trident");
     }
 
     Vec2d origin(int index) { return plates.get_plate(index)->get_origin().head<2>(); }
@@ -150,4 +155,101 @@ TEST_CASE("Invalid own beds are rejected and change nothing", "[PartPlateRows]")
     CHECK_FALSE(f.plates.set_plate_printer_bed(1, bed));
     CHECK_FALSE(f.plates.has_printer_beds());
     CHECK_THAT(f.origin(1).x(), WithinAbs(project_size * (1. + gap), 1e-6));
+}
+
+TEST_CASE("Printer slots are found by printer name", "[PartPlateRows]")
+{
+    PlateFixture f(1);
+    CHECK(f.plates.find_or_add_printer_slot("Voron 0.2") == 0);
+    CHECK(f.plates.find_or_add_printer_slot("Trident") == 1);
+    CHECK(f.plates.find_or_add_printer_slot("Voron 2.4") == 2);
+    CHECK(f.plates.printer_slots().size() == 3);
+    CHECK(f.plates.find_or_add_printer_slot("") == -1);
+    CHECK(f.plates.printer_slots().size() == 3);
+}
+
+TEST_CASE("Slot -1 is the project printer", "[PartPlateRows]")
+{
+    PlateFixture f(1);
+    REQUIRE(f.plates.printer_slot(-1) != nullptr);
+    f.plates.printer_slot(-1)->printer = "Voron 2.4";
+    CHECK(f.plates.printer_slot(-1)->printer == "Voron 2.4");
+    CHECK(f.plates.printer_slot(0)->printer == "Voron 0.2");
+    CHECK(f.plates.printer_slot(2) == nullptr);
+    CHECK(f.plates.printer_slot(-2) == nullptr);
+}
+
+TEST_CASE("A plate cannot use a slot that does not exist", "[PartPlateRows]")
+{
+    PlateFixture f(2);
+    CHECK_FALSE(f.plates.set_plate_printer_bed(1, small_bed(2)));
+    CHECK_FALSE(f.plates.has_printer_beds());
+}
+
+TEST_CASE("A slot's new bed reaches all its plates", "[PartPlateRows]")
+{
+    PlateFixture f(3);
+    REQUIRE(f.plates.set_plate_printer_bed(1, small_bed(0)));
+    REQUIRE(f.plates.set_plate_printer_bed(2, small_bed(0)));
+
+    PlatePrinterBed bigger = small_bed(5); // slot is taken from the call
+    bigger.shape           = square(180.);
+    bigger.height          = 170.;
+    REQUIRE(f.plates.set_slot_printer_bed(0, bigger));
+
+    for (int i : {1, 2}) {
+        CHECK(f.plates.get_plate(i)->get_size() == Vec2d(180., 180.));
+        CHECK(f.plates.get_plate(i)->printer_bed().slot == 0);
+        CHECK_THAT(f.plates.get_plate(i)->printer_bed().height, WithinAbs(170., 1e-9));
+    }
+    CHECK(f.plates.get_plate(0)->get_size() == Vec2d(project_size, project_size));
+    CHECK_THAT(f.origin(2).x(), WithinAbs(180. * (1. + gap), 1e-6));
+}
+
+TEST_CASE("Invalid slot beds are rejected", "[PartPlateRows]")
+{
+    PlateFixture f(2);
+    REQUIRE(f.plates.set_plate_printer_bed(1, small_bed(0)));
+    PlatePrinterBed bad = small_bed(0);
+    bad.height          = -5.;
+    CHECK_FALSE(f.plates.set_slot_printer_bed(0, bad));
+    CHECK_FALSE(f.plates.set_slot_printer_bed(-1, small_bed(0)));
+    CHECK_FALSE(f.plates.set_slot_printer_bed(7, small_bed(0)));
+    CHECK(f.plates.get_plate(1)->get_size() == Vec2d(120., 120.));
+}
+
+TEST_CASE("Resetting the plate list forgets printer slots", "[PartPlateRows]")
+{
+    PlateFixture f(2);
+    REQUIRE(f.plates.set_plate_printer_bed(1, small_bed(0)));
+    f.plates.printer_slot(-1)->printer = "Voron 2.4";
+    f.plates.reset(true);
+    CHECK(f.plates.printer_slots().empty());
+    CHECK(f.plates.printer_slot(-1)->printer.empty());
+    CHECK_FALSE(f.plates.has_printer_beds());
+}
+
+TEST_CASE("A plate's own bed survives an undo snapshot round trip", "[PartPlateRows]")
+{
+    PlatePrinterBed bed = small_bed(1);
+    bed.exclude_areas   = square(10.);
+    bed.height_to_lid   = 20.f;
+    std::stringstream data;
+    {
+        cereal::BinaryOutputArchive out(data);
+        out(bed, PrinterSlot{"Trident", "0.20mm Standard"});
+    }
+    PlatePrinterBed loaded;
+    PrinterSlot     slot;
+    {
+        cereal::BinaryInputArchive in(data);
+        in(loaded, slot);
+    }
+    CHECK(loaded.slot == 1);
+    CHECK(loaded.shape == bed.shape);
+    CHECK(loaded.exclude_areas == bed.exclude_areas);
+    CHECK_THAT(loaded.height, WithinAbs(115., 1e-9));
+    CHECK(loaded.height_to_lid == 20.f);
+    CHECK(slot.printer == "Trident");
+    CHECK(slot.print == "0.20mm Standard");
 }

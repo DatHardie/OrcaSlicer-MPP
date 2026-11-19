@@ -409,6 +409,14 @@ PlateSettingsDialog::PlateSettingsDialog(wxWindow* parent, const wxString& title
     top_sizer->Add(plate_name_txt, 0, wxALIGN_CENTER_VERTICAL | wxALIGN_LEFT | wxTOP | wxBOTTOM, FromDIP(5));
     top_sizer->Add(m_ti_plate_name, 0, wxALIGN_CENTER_VERTICAL | wxALIGN_RIGHT | wxTOP | wxBOTTOM, FromDIP(5));
 
+    m_printer_txt = new wxStaticText(this, wxID_ANY, _L("Printer"));
+    m_printer_txt->SetFont(Label::Body_14);
+    m_printer_choice = new ComboBox(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(240), -1), 0, NULL, wxCB_READONLY);
+    top_sizer->Add(m_printer_txt, 0, wxALIGN_CENTER_VERTICAL | wxALIGN_LEFT | wxTOP | wxBOTTOM, FromDIP(5));
+    top_sizer->Add(m_printer_choice, 0, wxALIGN_CENTER_VERTICAL | wxALIGN_RIGHT | wxTOP | wxBOTTOM, FromDIP(5));
+    m_printer_txt->Hide();
+    m_printer_choice->Hide();
+
     m_bed_type_choice = new ComboBox( this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(240),-1), 0, NULL, wxCB_READONLY );
     auto pm           = wxGetApp().plater()->get_curr_printer_model();
     if (pm) {
@@ -674,6 +682,24 @@ wxString PlateSettingsDialog::get_plate_name() const {
 }
 
 void PlateSettingsDialog::set_plate_name(const wxString &name) { m_ti_plate_name->GetTextCtrl()->SetValue(name); }
+
+void PlateSettingsDialog::sync_printer_choices(const std::vector<wxString>& printers, int selection)
+{
+    m_printer_choice->Clear();
+    m_printer_choice->Append(_L("Project printer"));
+    for (const wxString& name : printers)
+        m_printer_choice->Append(name);
+    m_printer_choice->SetSelection(std::clamp(selection, 0, int(printers.size())));
+    m_printer_txt->Show();
+    m_printer_choice->Show();
+    Layout();
+    Fit();
+}
+
+int PlateSettingsDialog::get_printer_choice() const
+{
+    return m_printer_choice->IsShown() ? m_printer_choice->GetSelection() : wxNOT_FOUND;
+}
 
 BedType PlateSettingsDialog::get_bed_type_choice()
 {

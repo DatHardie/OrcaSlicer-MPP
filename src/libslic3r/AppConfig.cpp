@@ -568,6 +568,9 @@ void AppConfig::set_defaults()
         set_bool("enable_high_low_temp_mixed_printing", false);
     }
 
+    if (get("multi_printer_projects").empty())
+        set_bool("multi_printer_projects", false);
+
     if (get("remember_print_action").empty()) {
         set_bool("remember_print_action", false);
     }

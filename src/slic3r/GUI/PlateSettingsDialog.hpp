@@ -131,6 +131,9 @@ public:
     }
 
     BedType get_bed_type_choice();
+    // Shows the printer row; 0 is project printer.
+    void sync_printer_choices(const std::vector<wxString>& printers, int selection);
+    int get_printer_choice() const;
 
     wxString get_plate_name() const;
     void set_plate_name(const wxString& name);
@@ -178,6 +181,8 @@ protected:
 
 protected:
     ComboBox* m_bed_type_choice { nullptr };
+    ComboBox* m_printer_choice { nullptr };
+    wxStaticText* m_printer_txt { nullptr };
     std::vector<BedType> m_cur_combox_bed_types;
     ComboBox* m_print_seq_choice { nullptr };
     ComboBox* m_first_layer_print_seq_choice { nullptr };

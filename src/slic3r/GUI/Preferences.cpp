@@ -2022,6 +2022,11 @@ void PreferencesDialog::create_items()
     auto item_remember_print_action = create_item_checkbox(_L("Remember last print action"), _L("If enabled, OrcaSlicer will remember the last selected option in the print button's dropdown (e.g. Print, Export plate sliced file, Export G-code file) and use it as the default on next startup."), "remember_print_action");
     g_sizer->Add(item_remember_print_action);
 
+    auto item_multi_printer = create_item_checkbox(_L("Multi-printer projects (experimental)"),
+        _L("If enabled, each plate can use its own printer, chosen in the plate settings. The plate is shown at that printer's bed size, and selecting it activates that printer's presets."),
+        "multi_printer_projects");
+    g_sizer->Add(item_multi_printer);
+
     //// BEHAVIOUR > Preview
     g_sizer->Add(create_item_title(_L("Preview")), 1, wxEXPAND);
 

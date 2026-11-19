@@ -6463,6 +6463,8 @@ void PartPlateList::clear(bool delete_plates, bool release_print_list, bool exce
 void PartPlateList::reset(bool do_init)
 {
 	clear(true, false);
+	m_printer_slots.clear();
+	m_project_printer = PrinterSlot{};
 
 	//m_plate_list.clear();
 
@@ -7079,30 +7081,83 @@ void PartPlateList::set_plate_shape(PartPlate& plate, const Vec2d& pos)
 		plate.set_shape(m_shape, m_exclude_areas, m_extruder_areas, m_extruder_heights, pos, m_height_to_lid, m_height_to_rod);
 }
 
-bool PartPlateList::set_plate_printer_bed(int index, PlatePrinterBed bed)
+bool PartPlateList::valid_printer_bed(const PlatePrinterBed& bed)
 {
-	if (index < 0 || index >= int(m_plate_list.size()))
+	const bool finite = std::all_of(bed.shape.begin(), bed.shape.end(), [](const Vec2d& p) { return p.allFinite(); });
+	if (bed.shape.size() < 3 || !finite || !std::isfinite(bed.height) || bed.height <= 0.)
 		return false;
-	if (bed.assigned()) {
-		const bool finite = std::all_of(bed.shape.begin(), bed.shape.end(), [](const Vec2d& p) { return p.allFinite(); });
-		if (bed.shape.size() < 3 || !finite || !std::isfinite(bed.height) || bed.height <= 0.)
-			return false;
-		const Vec2d size = BoundingBoxf(bed.shape).size();
-		if (size.x() < 1. || size.y() < 1.)
-			return false;
-	} else {
-		bed = PlatePrinterBed{};
-	}
+	const Vec2d size = BoundingBoxf(bed.shape).size();
+	return size.x() >= 1. && size.y() >= 1.;
+}
 
-	reload_all_objects();
-	m_plate_list[index]->m_printer_bed = std::move(bed);
-	update_all_plates_pos_and_size(true, true);
+void PartPlateList::apply_printer_beds(bool move_instances)
+{
+	update_all_plates_pos_and_size(move_instances, move_instances);
 	set_shapes(m_shape, m_exclude_areas, m_wrapping_exclude_areas, m_extruder_areas, m_extruder_heights, m_logo_texture_filename, m_height_to_lid, m_height_to_rod);
 	if (m_plater) {
 		Vec2d pos = compute_shape_position(m_current_plate, m_plate_cols);
 		m_plater->set_bed_position(pos);
 	}
+}
+
+bool PartPlateList::set_plate_printer_bed(int index, PlatePrinterBed bed)
+{
+	if (index < 0 || index >= int(m_plate_list.size()))
+		return false;
+	if (bed.assigned() && (bed.slot >= int(m_printer_slots.size()) || !valid_printer_bed(bed)))
+		return false;
+	if (!bed.assigned())
+		bed = PlatePrinterBed{};
+
+	reload_all_objects();
+	m_plate_list[index]->m_printer_bed = std::move(bed);
+	apply_printer_beds(true);
 	return true;
+}
+
+bool PartPlateList::set_slot_printer_bed(int slot, PlatePrinterBed bed)
+{
+	if (slot < 0 || slot >= int(m_printer_slots.size()))
+		return false;
+	bed.slot = slot;
+	if (!valid_printer_bed(bed))
+		return false;
+
+	reload_all_objects();
+	bool changed = false;
+	for (PartPlate* plate : m_plate_list)
+		if (plate->m_printer_bed.slot == slot) {
+			plate->m_printer_bed = bed;
+			changed = true;
+		}
+	if (changed)
+		apply_printer_beds(true);
+	return true;
+}
+
+void PartPlateList::refresh_printer_rows()
+{
+	apply_printer_beds(false);
+}
+
+PrinterSlot* PartPlateList::printer_slot(int slot)
+{
+	if (slot == -1)
+		return &m_project_printer;
+	if (slot < 0 || slot >= int(m_printer_slots.size()))
+		return nullptr;
+	return &m_printer_slots[slot];
+}
+
+int PartPlateList::find_or_add_printer_slot(const std::string& printer)
+{
+	if (printer.empty())
+		return -1;
+	for (size_t i = 0; i < m_printer_slots.size(); ++i)
+		if (m_printer_slots[i].printer == printer)
+			return int(i);
+	m_printer_slots.push_back({printer, {}});
+	return int(m_printer_slots.size()) - 1;
 }
 
 //get the plate counts, not including the invalid plate
