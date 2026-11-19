@@ -705,11 +705,10 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
         //    return;
         //}
         auto check = [this](bool yes_or_no) {
-            // Other printers' changes are not in projects.
-            if (!m_plater->check_printer_slot_changes(_L("Closing application"), _L("Closing Application while some presets are modified.")))
-                return false;
             if (yes_or_no)
                 return true;
+            if (!m_plater->check_printer_slot_changes(_L("Closing application"), _L("Closing Application while some presets are modified.")))
+                return false;
             return wxGetApp().check_and_save_current_preset_changes(_L("Closing application"), _L("Closing Application while some presets are modified."));
         };
 

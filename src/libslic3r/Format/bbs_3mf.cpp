@@ -242,6 +242,7 @@ const std::string ORCA_CAD_RECIPE_FILE = "Metadata/orca_cad.bin";
 // feature tree of every project written before the move, without a word. Never written.
 const std::string LEGACY_CAD_RECIPE_FILE = "Metadata/SnapOrca_cad.bin";
 const std::string LAYER_CONFIG_RANGES_FILE = "Metadata/layer_config_ranges.xml";
+const std::string PRINTER_SLOTS_FILE = "Metadata/printer_slots.json";
 const std::string BRIM_EAR_POINTS_FILE = "Metadata/brim_ear_points.txt";
 /*const std::string SLA_SUPPORT_POINTS_FILE = "Metadata/Slic3r_PE_sla_support_points.txt";
 const std::string SLA_DRAIN_HOLES_FILE = "Metadata/Slic3r_PE_sla_drain_holes.txt";*/
@@ -406,6 +407,7 @@ static constexpr const char* INSTANCEID_ATTR = "instance_id";
 static constexpr const char* IDENTIFYID_ATTR = "identify_id";
 static constexpr const char* PLATERID_ATTR = "plater_id";
 static constexpr const char* PLATER_NAME_ATTR = "plater_name";
+static constexpr const char* PRINTER_SLOT_ATTR = "printer_slot";
 static constexpr const char* PLATE_IDX_ATTR = "index";
 static constexpr const char* PRINTER_MODEL_ID_ATTR = "printer_model_id";
 static constexpr const char* EXTRUDER_TYPE_ATTR = "extruder_type";
@@ -1740,6 +1742,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             }
             PlateData * plate = plate_data_list[it->first-1];
             plate->locked = it->second->locked;
+            plate->printer_slot = it->second->printer_slot;
             plate->plate_index = it->second->plate_index-1;
             plate->obj_inst_map = it->second->obj_inst_map;
             plate->gcode_file = it->second->gcode_file;
@@ -2077,6 +2080,15 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 else if (boost::algorithm::iequals(name, CUT_INFORMATION_FILE)) {
                     // extract object cut info
                     _extract_cut_information_from_archive(archive, stat, config_substitutions);
+                }
+                else if (!dont_load_config && boost::algorithm::iequals(name, PRINTER_SLOTS_FILE)) {
+                    // Small JSON; larger means a broken file.
+                    constexpr mz_uint64 kMaxPrinterSlots = mz_uint64(1) << 24;
+                    if (stat.m_uncomp_size > 0 && stat.m_uncomp_size <= kMaxPrinterSlots) {
+                        std::string buf((size_t)stat.m_uncomp_size, '\0');
+                        if (mz_zip_reader_extract_to_mem(&archive, stat.m_file_index, buf.data(), buf.size(), 0))
+                            model.printer_slots = std::move(buf);
+                    }
                 }
                 //BBS: project embedded presets
                 else if (!dont_load_config && boost::algorithm::istarts_with(name, PROJECT_EMBEDDED_PRINT_PRESETS_FILE)) {
@@ -2450,6 +2462,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 return false;
             }
             plate_data_list[it->first-1]->locked = it->second->locked;
+            plate_data_list[it->first-1]->printer_slot = it->second->printer_slot;
             plate_data_list[it->first-1]->plate_index = it->second->plate_index-1;
             plate_data_list[it->first-1]->plate_name = it->second->plate_name;
             plate_data_list[it->first-1]->obj_inst_map = it->second->obj_inst_map;
@@ -4656,6 +4669,10 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             {
                 std::istringstream(value) >> std::boolalpha >> m_curr_plater->locked;
             }
+            else if (key == PRINTER_SLOT_ATTR)
+            {
+                m_curr_plater->printer_slot = atoi(value.c_str());
+            }
             else if (key == BED_TYPE_ATTR)
             {
                 BedType bed_type = BedType::btPC;
@@ -6333,6 +6350,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         bool _add_build_to_model_stream(std::stringstream& stream, const BuildItemsList& build_items) const;
         bool _add_layer_height_profile_file_to_archive(mz_zip_archive& archive, Model& model);
         bool _add_cad_recipe_file_to_archive(mz_zip_archive& archive, Model& model);
+        bool _add_printer_slots_file_to_archive(mz_zip_archive& archive, Model& model);
         bool _add_layer_config_ranges_file_to_archive(mz_zip_archive& archive, Model& model);
         bool _add_brim_ear_points_file_to_archive(mz_zip_archive& archive, Model& model);
         bool _add_sla_support_points_file_to_archive(mz_zip_archive& archive, Model& model);
@@ -6834,6 +6852,9 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     if (cb_cancel) return false;
                 }
             }
+
+            if (!m_minimal_published && !_add_printer_slots_file_to_archive(archive, model))
+                return false;
         }
 
         // add plate_N.gcode.md5 to file
@@ -8051,6 +8072,19 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         return true;
     }
 
+    bool _BBS_3MF_Exporter::_add_printer_slots_file_to_archive(mz_zip_archive& archive, Model& model)
+    {
+        if (model.printer_slots.empty())
+            return true;
+        if (!mz_zip_writer_add_mem(&archive, PRINTER_SLOTS_FILE.c_str(),
+                (const void*)model.printer_slots.data(), model.printer_slots.length(),
+                MZ_DEFAULT_COMPRESSION)) {
+            add_error("Unable to add printer slots file to archive");
+            return false;
+        }
+        return true;
+    }
+
     bool _BBS_3MF_Exporter::_add_layer_config_ranges_file_to_archive(mz_zip_archive& archive, Model& model)
     {
         std::string out = "";
@@ -8515,6 +8549,9 @@ bool _BBS_3MF_Exporter::_add_model_config_file_to_archive(mz_zip_archive& archiv
                 stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << PLATERID_ATTR << "\" " << VALUE_ATTR << "=\"" << plate_data->plate_index + 1 << "\"/>\n";
                 stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << PLATER_NAME_ATTR << "\" " << VALUE_ATTR << "=\"" <<  xml_escape(plate_data->plate_name.c_str()) << "\"/>\n";
                 stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << LOCK_ATTR << "\" " << VALUE_ATTR << "=\"" << std::boolalpha<< plate_data->locked<< "\"/>\n";
+                // Only plates with their own printer.
+                if (plate_data->printer_slot >= 0)
+                    stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << PRINTER_SLOT_ATTR << "\" " << VALUE_ATTR << "=\"" << plate_data->printer_slot << "\"/>\n";
                 ConfigOption* bed_type_opt = plate_data->config.option("curr_bed_type");
                 t_config_enum_names bed_type_names = ConfigOptionEnum<BedType>::get_enum_names();
                 if (bed_type_opt != nullptr && bed_type_names.size() > bed_type_opt->getInt())

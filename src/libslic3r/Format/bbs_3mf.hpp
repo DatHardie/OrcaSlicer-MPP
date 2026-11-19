@@ -127,6 +127,7 @@ struct PlateData
     bool            toolpath_outside {false};
     bool            is_label_object_enabled {false};
     int             timelapse_warning_code = 0; // 1<<0 sprial vase, 1<<1 by object
+    int             printer_slot = -1; // Own printer slot, -1: project printer
     std::vector<int>          filament_maps;   // 1 base
     using LayerFilaments = std::unordered_map<std::vector<unsigned int>, std::vector<std::pair<int, int>>, GCodeProcessorResult::FilamentSequenceHash>;
     LayerFilaments layer_filaments;

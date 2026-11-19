@@ -560,6 +560,8 @@ public:
     DynamicPrintConfig          full_config(bool apply_extruder = true, std::optional<std::vector<int>>filament_maps = std::nullopt, std::optional<std::vector<int>> filament_volume_maps = std::nullopt) const;
     // full_config() with the some "useless" config removed.
     DynamicPrintConfig          full_config_secure(std::optional<std::vector<int>>filament_maps = std::nullopt) const;
+    // Removes print host addresses and credentials.
+    static void                 erase_secure_options(DynamicPrintConfig &config);
 
     // Default per-filament nozzle-volume types: each filament inherits the volume type of the
     // extruder it maps to (1-based f_maps), Standard when unknown.

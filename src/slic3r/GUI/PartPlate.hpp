@@ -147,6 +147,19 @@ struct PrinterSlot
     bool has_changes() const { return !printer_changes.empty() || !print_changes.empty() || !filament_changes.empty(); }
 };
 
+// Printer slots as saved with a project.
+struct PrinterSlotsData
+{
+    int                      active_slot{-1};
+    PrinterSlot              project_printer;
+    std::vector<PrinterSlot> slots;
+};
+
+// Content of Metadata/printer_slots.json.
+std::string printer_slots_to_json(const PrinterSlotsData& data);
+// False on invalid input; data is then unchanged.
+bool printer_slots_from_json(const std::string& json, PrinterSlotsData& data);
+
 class PartPlate : public ObjectBase
 {
 public:
@@ -999,6 +1012,9 @@ public:
     PrinterSlot* printer_slot(int slot);
     int find_or_add_printer_slot(const std::string& printer);
     void clear_printer_slots();
+    void set_printer_slots(std::vector<PrinterSlot> slots, PrinterSlot project_printer);
+    // One bed per plate; objects keep their positions.
+    void load_printer_beds(std::vector<PlatePrinterBed> beds);
     // Bed for plates created from now on.
     void set_new_plate_bed(PlatePrinterBed bed) { m_new_plate_bed = std::move(bed); }
 

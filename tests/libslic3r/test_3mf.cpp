@@ -686,6 +686,62 @@ TEST_CASE("A plate's G-code statistics are stored next to its G-code", "[3mf]")
         CHECK(stored == plate.statistics);
 }
 
+TEST_CASE("Plate printers and printer slots survive a project round trip", "[3mf]")
+{
+    const bool with_slots = GENERATE(false, true);
+    Model        model;
+    ModelObject* object = model.add_object();
+    object->add_volume(make_cube(10., 10., 10.));
+    object->add_instance();
+    ScopedTemporaryDir backup_dir("orca_printer_slots_src");
+    model.set_backup_path(backup_dir.string());
+    const std::string slots = R"({"version": 1, "slots": []})";
+    if (with_slots)
+        model.printer_slots = slots;
+
+    DynamicPrintConfig cfg = DynamicPrintConfig::full_print_config();
+    PlateData          first, second;
+    first.plate_index   = 0;
+    second.plate_index  = 1;
+    second.printer_slot = with_slots ? 0 : -1;
+    ScopedTemporaryFile file(".3mf");
+    const std::string   path = file.string();
+    StoreParams         sp;
+    sp.path     = path.c_str();
+    sp.model    = &model;
+    sp.config   = &cfg;
+    sp.strategy = SaveStrategy::Zip64 | SaveStrategy::Silence;
+    sp.plate_data_list.push_back(&first);
+    sp.plate_data_list.push_back(&second);
+    REQUIRE(store_bbs_3mf(sp));
+
+    std::string stored;
+    CHECK(read_cad_recipe_entry(path, stored, "Metadata/printer_slots.json") == with_slots);
+    REQUIRE(read_cad_recipe_entry(path, stored, "Metadata/model_settings.config"));
+    // Projects without own printers keep the old keys.
+    CHECK((stored.find("printer_slot") != std::string::npos) == with_slots);
+
+    LoadStrategy strategy = GENERATE(LoadStrategy::LoadModel | LoadStrategy::LoadConfig, LoadStrategy::LoadModel);
+    Model                     loaded;
+    ScopedTemporaryDir        load_dir("orca_printer_slots_dst");
+    loaded.set_backup_path(load_dir.string());
+    DynamicPrintConfig        config;
+    ConfigSubstitutionContext ctxt{ForwardCompatibilitySubstitutionRule::Enable};
+    PlateDataPtrs             plates;
+    std::vector<Preset*>      project_presets;
+    bool                      is_bbl_3mf = false, is_orca_3mf = false;
+    Semver                    file_version;
+    REQUIRE(load_bbs_3mf(path.c_str(), &config, &ctxt, &loaded, &plates, &project_presets, &is_bbl_3mf, &is_orca_3mf,
+                         &file_version, nullptr, strategy));
+    REQUIRE(plates.size() == 2);
+    CHECK(plates[0]->printer_slot == -1);
+    CHECK(plates[1]->printer_slot == (with_slots ? 0 : -1));
+    // Slots load only together with the config.
+    const bool slots_loaded = with_slots && (strategy & LoadStrategy::LoadConfig);
+    CHECK(loaded.printer_slots == (slots_loaded ? slots : std::string()));
+    release_PlateData_list(plates);
+}
+
 TEST_CASE("A project with a plate id below 1 fails to load", "[3mf][Regression]")
 {
     const int plate_id = GENERATE(0, -1);

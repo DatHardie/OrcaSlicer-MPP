@@ -7162,6 +7162,24 @@ void PartPlateList::clear_printer_slots()
 	m_project_printer = PrinterSlot{};
 }
 
+void PartPlateList::set_printer_slots(std::vector<PrinterSlot> slots, PrinterSlot project_printer)
+{
+	m_printer_slots   = std::move(slots);
+	m_project_printer = std::move(project_printer);
+}
+
+void PartPlateList::load_printer_beds(std::vector<PlatePrinterBed> beds)
+{
+	beds.resize(m_plate_list.size());
+	for (size_t i = 0; i < m_plate_list.size(); ++i) {
+		PlatePrinterBed& bed = beds[i];
+		if (bed.assigned() && (bed.slot >= int(m_printer_slots.size()) || !valid_printer_bed(bed)))
+			bed = PlatePrinterBed{};
+		m_plate_list[i]->m_printer_bed = std::move(bed);
+	}
+	apply_printer_beds(false);
+}
+
 PrinterSlot* PartPlateList::printer_slot(int slot)
 {
 	if (slot == -1)
@@ -9362,6 +9380,115 @@ void PartPlateList::on_filament_deleted(int filament_count, int filament_id)
         m_plate_list[i]->on_filament_deleted(filament_count, filament_id);
     }
     BOOST_LOG_TRIVIAL(info) << boost::format("%1%: filament_count=%2%, filament_id=%3%")% __FUNCTION__ %filament_count %filament_id;
+}
+
+namespace {
+
+constexpr int printer_slots_version = 1;
+
+nlohmann::json config_to_json(const DynamicPrintConfig& config)
+{
+	nlohmann::json out = nlohmann::json::object();
+	for (const std::string& key : config.keys())
+		out[key] = config.option(key)->serialize();
+	return out;
+}
+
+// Unknown keys are dropped like in project files.
+bool config_from_json(const nlohmann::json& in, DynamicPrintConfig& config)
+{
+	if (!in.is_object())
+		return false;
+	std::map<std::string, std::string> values;
+	for (auto it = in.begin(); it != in.end(); ++it) {
+		if (!it.value().is_string())
+			return false;
+		values[it.key()] = it.value().get<std::string>();
+	}
+	try {
+		config.load_string_map(values, ForwardCompatibilitySubstitutionRule::EnableSilent);
+	} catch (const std::exception&) {
+		return false;
+	}
+	return true;
+}
+
+nlohmann::json slot_to_json(const PrinterSlot& slot)
+{
+	return {{"printer", slot.printer},
+	        {"print", slot.print},
+	        {"filaments", slot.filaments},
+	        {"changed_filament", slot.changed_filament},
+	        {"printer_changes", config_to_json(slot.printer_changes)},
+	        {"print_changes", config_to_json(slot.print_changes)},
+	        {"filament_changes", config_to_json(slot.filament_changes)}};
+}
+
+bool slot_from_json(const nlohmann::json& in, PrinterSlot& slot)
+{
+	if (!in.is_object())
+		return false;
+	auto text = [&in](const char* key, std::string& value) {
+		auto it = in.find(key);
+		if (it == in.end() || !it->is_string())
+			return false;
+		value = it->get<std::string>();
+		return true;
+	};
+	auto filaments = in.find("filaments");
+	if (!text("printer", slot.printer) || !text("print", slot.print) || !text("changed_filament", slot.changed_filament) ||
+	    filaments == in.end() || !filaments->is_array())
+		return false;
+	for (const nlohmann::json& name : *filaments) {
+		if (!name.is_string())
+			return false;
+		slot.filaments.push_back(name.get<std::string>());
+	}
+	return config_from_json(in.value("printer_changes", nlohmann::json::object()), slot.printer_changes) &&
+	       config_from_json(in.value("print_changes", nlohmann::json::object()), slot.print_changes) &&
+	       config_from_json(in.value("filament_changes", nlohmann::json::object()), slot.filament_changes);
+}
+
+} // namespace
+
+std::string printer_slots_to_json(const PrinterSlotsData& data)
+{
+	nlohmann::json slots = nlohmann::json::array();
+	for (const PrinterSlot& slot : data.slots)
+		slots.push_back(slot_to_json(slot));
+	nlohmann::json out = {{"version", printer_slots_version},
+	                      {"active_slot", data.active_slot},
+	                      {"project_printer", slot_to_json(data.project_printer)},
+	                      {"slots", slots}};
+	return out.dump(1);
+}
+
+bool printer_slots_from_json(const std::string& json, PrinterSlotsData& data)
+{
+	const nlohmann::json in = nlohmann::json::parse(json, nullptr, false);
+	if (!in.is_object())
+		return false;
+	auto version = in.find("version");
+	if (version == in.end() || !version->is_number_integer() || version->get<int>() != printer_slots_version)
+		return false;
+	PrinterSlotsData loaded;
+	auto active = in.find("active_slot");
+	auto slots  = in.find("slots");
+	auto project = in.find("project_printer");
+	if (active == in.end() || !active->is_number_integer() || slots == in.end() || !slots->is_array() ||
+	    project == in.end() || !slot_from_json(*project, loaded.project_printer))
+		return false;
+	for (const nlohmann::json& item : *slots) {
+		PrinterSlot slot;
+		if (!slot_from_json(item, slot) || slot.printer.empty())
+			return false;
+		loaded.slots.push_back(std::move(slot));
+	}
+	loaded.active_slot = active->get<int>();
+	if (loaded.active_slot < -1 || loaded.active_slot >= int(loaded.slots.size()))
+		return false;
+	data = std::move(loaded);
+	return true;
 }
 
 }//end namespace GUI

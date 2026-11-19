@@ -7285,6 +7285,8 @@ struct Plater::priv
     // Printer slot whose presets are active.
     int m_active_printer_slot{-1};
     bool m_switching_printer_slot{false};
+    // Slot changes come from the opened project.
+    bool m_loading_printer_slots{false};
     void invalidate_plates_for_presets(Preset::Type type);
     void update_model_print_params();
     bool multi_printer_enabled() const;
@@ -7293,6 +7295,8 @@ struct Plater::priv
     void restore_preset_changes(PrinterSlot& slot);
     void activate_printer_slot();
     bool assign_plate_printer(int plate_index, const std::string& printer);
+    void store_printer_slots(PlateDataPtrs& plate_data, Model& target);
+    void restore_printer_slots(const PlateDataPtrs& plate_data, const std::string& json, const DynamicPrintConfig& project_config);
     //BBS: add a flag to ignore cancel event
     bool m_ignore_event{false};
     bool m_slice_all{false};
@@ -9011,6 +9015,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
 {
     if (config_loaded_out != nullptr)
         *config_loaded_out = false;
+    ScopeGuard loaded_printer_slots([this]() { m_loading_printer_slots = false; });
 
     std::vector<size_t> empty_result;
     bool dlg_cont = true;
@@ -9675,6 +9680,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             if (const auto* colours_opt = config_loaded.option<ConfigOptionStrings>("filament_colour"))
                                 project_filament_count = colours_opt->size();
                             partplate_list.load_from_3mf_structure(plate_data, project_filament_count);
+                            restore_printer_slots(plate_data, model.printer_slots, config_loaded);
                             partplate_list.update_slice_context_to_current_plate(background_process);
                             this->preview->update_gcode_result(partplate_list.get_current_slice_result());
                             release_PlateData_list(plate_data);
@@ -15483,7 +15489,7 @@ void Plater::priv::stash_preset_changes(PrinterSlot& slot)
     stashed |= stash(bundle.prints, slot.print_changes);
     slot.changed_filament = bundle.filaments.get_selected_preset_name();
     stashed |= stash(bundle.filaments, slot.filament_changes);
-    if (stashed)
+    if (stashed && !m_loading_printer_slots)
         q->set_plater_dirty(true);
 }
 
@@ -15556,20 +15562,13 @@ void Plater::priv::activate_printer_slot()
     q->on_config_change(bundle.full_config());
 }
 
-bool Plater::priv::assign_plate_printer(int plate_index, const std::string& printer)
+// Bed of a printer config, without slot.
+static std::optional<PlatePrinterBed> printer_bed_from(const DynamicPrintConfig& config)
 {
-    PresetBundle& bundle = *wxGetApp().preset_bundle;
-    if (printer.empty())
-        return partplate_list.set_plate_printer_bed(plate_index, PlatePrinterBed{});
-
-    const Preset* preset = bundle.printers.find_preset(printer, false);
-    if (preset == nullptr || preset->name != printer || preset->printer_technology() != ptFFF)
-        return false;
-    const DynamicPrintConfig& config = preset->config;
     const auto* area   = config.option<ConfigOptionPoints>("printable_area");
     const auto* height = config.option<ConfigOptionFloat>("printable_height");
     if (area == nullptr || height == nullptr)
-        return false;
+        return std::nullopt;
     PlatePrinterBed bed;
     bed.shape  = make_counter_clockwise(area->values);
     bed.height = height->value;
@@ -15579,8 +15578,135 @@ bool Plater::priv::assign_plate_printer(int plate_index, const std::string& prin
         bed.extruder_areas = opt->values;
     if (const auto* opt = config.option<ConfigOptionFloatsNullable>("extruder_printable_height"))
         bed.extruder_heights = opt->values;
-    bed.slot = partplate_list.find_or_add_printer_slot(printer);
-    return partplate_list.set_plate_printer_bed(plate_index, std::move(bed));
+    return bed;
+}
+
+// FFF printer preset with exactly this name.
+static const Preset* fff_printer_preset(const std::string& printer)
+{
+    const Preset* preset = wxGetApp().preset_bundle->printers.find_preset(printer, false);
+    return preset != nullptr && preset->name == printer && preset->printer_technology() == ptFFF ? preset : nullptr;
+}
+
+// Saved printer config plus the slot's unsaved changes.
+static std::optional<DynamicPrintConfig> slot_printer_config(const PrinterSlot& slot)
+{
+    const Preset* preset = fff_printer_preset(slot.printer);
+    if (preset == nullptr)
+        return std::nullopt;
+    DynamicPrintConfig config = preset->config;
+    config.apply(slot.printer_changes);
+    return config;
+}
+
+bool Plater::priv::assign_plate_printer(int plate_index, const std::string& printer)
+{
+    if (printer.empty())
+        return partplate_list.set_plate_printer_bed(plate_index, PlatePrinterBed{});
+
+    const Preset* preset = fff_printer_preset(printer);
+    std::optional<PlatePrinterBed> bed = preset != nullptr ? printer_bed_from(preset->config) : std::nullopt;
+    if (!bed)
+        return false;
+    bed->slot = partplate_list.find_or_add_printer_slot(printer);
+    return partplate_list.set_plate_printer_bed(plate_index, std::move(*bed));
+}
+
+// Saves slots and plate printers with the project.
+void Plater::priv::store_printer_slots(PlateDataPtrs& plate_data, Model& target)
+{
+    target.printer_slots.clear();
+    if (!multi_printer_enabled() || (!partplate_list.has_printer_beds() && m_active_printer_slot < 0))
+        return;
+    const PresetBundle& bundle = *wxGetApp().preset_bundle;
+    // Active slot changes live in project config.
+    auto active = [&bundle](PrinterSlot slot) {
+        slot.printer   = bundle.printers.get_selected_preset_name();
+        slot.print     = bundle.prints.get_selected_preset_name();
+        slot.filaments = bundle.filament_presets;
+        slot.changed_filament.clear();
+        slot.printer_changes.clear();
+        slot.print_changes.clear();
+        slot.filament_changes.clear();
+        return slot;
+    };
+    PrinterSlotsData data;
+    const PrinterSlot& project = *partplate_list.printer_slot(-1);
+    data.project_printer = m_active_printer_slot == -1 ? active(project) : project;
+    // Only slots with plates, numbered from 0.
+    std::map<int, int> saved_index;
+    for (size_t i = 0; i < plate_data.size() && int(i) < partplate_list.get_plate_count(); ++i) {
+        const int          slot   = partplate_list.get_plate(int(i))->printer_bed().slot;
+        const PrinterSlot* source = slot >= 0 ? partplate_list.printer_slot(slot) : nullptr;
+        if (source == nullptr)
+            continue;
+        auto [it, added] = saved_index.try_emplace(slot, int(data.slots.size()));
+        if (added)
+            data.slots.push_back(slot == m_active_printer_slot ? active(*source) : *source);
+        plate_data[i]->printer_slot = it->second;
+    }
+    if (auto it = saved_index.find(m_active_printer_slot); it != saved_index.end())
+        data.active_slot = it->second;
+    PresetBundle::erase_secure_options(data.project_printer.printer_changes);
+    for (PrinterSlot& slot : data.slots)
+        PresetBundle::erase_secure_options(slot.printer_changes);
+    target.printer_slots = printer_slots_to_json(data);
+}
+
+// Rebuilds slots and beds before objects load.
+void Plater::priv::restore_printer_slots(const PlateDataPtrs& plate_data, const std::string& json, const DynamicPrintConfig& project_config)
+{
+    if (!multi_printer_enabled() || json.empty())
+        return;
+    PrinterSlotsData data;
+    if (!printer_slots_from_json(json, data)) {
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": invalid printer slots, loading with one printer";
+        return;
+    }
+    std::vector<std::optional<PlatePrinterBed>> slot_beds;
+    for (size_t i = 0; i < data.slots.size(); ++i) {
+        // The active slot's printer is the project config.
+        const std::optional<DynamicPrintConfig> config = int(i) == data.active_slot ? std::optional(project_config) :
+                                                                                      slot_printer_config(data.slots[i]);
+        std::optional<PlatePrinterBed> bed = config ? printer_bed_from(*config) : std::nullopt;
+        if (bed)
+            bed->slot = int(i);
+        else
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": printer not available: " << data.slots[i].printer;
+        slot_beds.push_back(std::move(bed));
+    }
+    // Another slot active: restore project printer bed.
+    if (data.active_slot >= 0 && slot_beds[data.active_slot]) {
+        if (const std::optional<DynamicPrintConfig> config = slot_printer_config(data.project_printer)) {
+            auto points = [&config](const char* key) {
+                const auto* opt = config->option<ConfigOptionPoints>(key);
+                return opt != nullptr ? opt->values : Pointfs{};
+            };
+            auto text = [&config](const char* key) {
+                const auto* opt = config->option<ConfigOptionString>(key);
+                return opt != nullptr ? opt->value : std::string();
+            };
+            const std::optional<PlatePrinterBed> bed              = printer_bed_from(*config);
+            const auto*                          extruder_areas   = config->option<ConfigOptionPointsGroups>("extruder_printable_area");
+            const auto*                          extruder_heights = config->option<ConfigOptionFloatsNullable>("extruder_printable_height");
+            if (bed)
+                q->set_bed_shape(points("printable_area"), points("bed_exclude_area"), points("wrapping_exclude_area"), bed->height,
+                                 extruder_areas != nullptr ? extruder_areas->values : std::vector<Pointfs>{},
+                                 extruder_heights != nullptr ? extruder_heights->values : std::vector<double>{},
+                                 text("bed_custom_texture"), text("bed_custom_model"));
+        }
+    }
+    std::vector<PlatePrinterBed> beds(plate_data.size());
+    for (size_t i = 0; i < plate_data.size(); ++i) {
+        const int slot = plate_data[i]->printer_slot;
+        if (slot >= 0 && slot < int(slot_beds.size()) && slot_beds[slot])
+            beds[i] = *slot_beds[slot];
+    }
+    partplate_list.set_printer_slots(std::move(data.slots), std::move(data.project_printer));
+    partplate_list.load_printer_beds(std::move(beds));
+    if (data.active_slot >= 0 && slot_beds[data.active_slot])
+        m_active_printer_slot = data.active_slot;
+    m_loading_printer_slots = true;
 }
 
 void Plater::priv::invalidate_plates_for_presets(Preset::Type type)
@@ -15611,7 +15737,8 @@ void Plater::priv::invalidate_plates_for_presets(Preset::Type type)
 
 bool Plater::check_printer_slot_changes(const wxString& caption, const wxString& header)
 {
-    if (!p->multi_printer_enabled())
+    // A saved project holds the slot changes.
+    if (!p->multi_printer_enabled() || !is_project_dirty())
         return true;
     PartPlateList& plates = p->partplate_list;
     const int original = plates.get_curr_plate_index();
@@ -16683,8 +16810,8 @@ int Plater::new_project(bool skip_confirm, bool silent, const wxString& project_
     bool transfer_preset_changes = false;
     // BBS: save confirm
     auto check = [this,&transfer_preset_changes](bool yes_or_no) {
-        // Other printers' changes are not in projects.
-        if (!check_printer_slot_changes(_L("Creating a new project"), _L("Some presets are modified.")))
+        // A saved project keeps other printers' changes.
+        if (!yes_or_no && !check_printer_slot_changes(_L("Creating a new project"), _L("Some presets are modified.")))
             return false;
         m_new_project_and_check_state = true;
         wxString header = _L("Some presets are modified.") + "\n" +
@@ -16777,7 +16904,7 @@ void Plater::load_project(wxString const& filename2,
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__;
     auto filename = filename2;
     auto check = [&filename, this] (bool yes_or_no) {
-        if (!check_printer_slot_changes(_L("Load project"), _L("Some presets are modified.")))
+        if (!yes_or_no && !check_printer_slot_changes(_L("Load project"), _L("Some presets are modified.")))
             return false;
         if (!yes_or_no && !wxGetApp().check_and_save_current_preset_changes(_L("Load project"),
                 _L("Some presets are modified.")))
@@ -18883,8 +19010,8 @@ void Plater::load_gcode(const wxString& filename)
     // BSS: create a new project when load_gcode, force close previous one
     if (file_config) {
         auto check = [this](bool yes_or_no) {
-            return check_printer_slot_changes(_L("Load project"), _L("Some presets are modified.")) &&
-                   (yes_or_no || wxGetApp().check_and_save_current_preset_changes(_L("Load project"), _L("Some presets are modified.")));
+            return yes_or_no || (check_printer_slot_changes(_L("Load project"), _L("Some presets are modified.")) &&
+                                 wxGetApp().check_and_save_current_preset_changes(_L("Load project"), _L("Some presets are modified.")));
         };
         if (close_with_confirm(check) == wxID_CANCEL || new_project(true, true) != wxID_YES)
             return;
@@ -21342,6 +21469,10 @@ int Plater::export_3mf(const boost::filesystem::path& output_path, SaveStrategy 
     PlateDataPtrs plate_data_list;
     p->partplate_list.store_to_3mf_structure(plate_data_list, (strategy & SaveStrategy::WithGcode || strategy & SaveStrategy::WithSliceInfo), export_plate_idx,
                                              strategy & SaveStrategy::WithStatistics);
+    // Only project saves carry printer slots.
+    ScopeGuard clear_printer_slots([this]() { p->model.printer_slots.clear(); });
+    if (!(strategy & SaveStrategy::SkipModel))
+        p->store_printer_slots(plate_data_list, p->model);
 
     // Orca: non-BBL G-code isn't post-processed in place, so run the scripts on a copy before packing it.
     std::vector<std::string> pp_tmp_files;

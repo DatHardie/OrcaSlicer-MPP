@@ -338,3 +338,111 @@ TEST_CASE("A slot reports stored preset changes of any kind", "[PartPlateRows]")
     changes.clear();
     CHECK_FALSE(slot.has_changes());
 }
+
+TEST_CASE("Printer slots survive a JSON round trip", "[PartPlateRows]")
+{
+    PrinterSlotsData data;
+    data.active_slot     = 1;
+    data.project_printer = PrinterSlot{"Ender 3 V2", "0.20mm Standard", {"Generic PLA"}};
+    data.slots.push_back(PrinterSlot{"Voron 0.1", "0.20mm Voron", {"Generic PLA", "Generic PETG"}});
+    data.slots.push_back(PrinterSlot{"Prusa MK4", "0.20mm MK4", {"Generic PETG"}});
+    data.slots[0].print_changes.set_key_value("layer_height", new ConfigOptionFloat(0.3));
+    data.slots[0].changed_filament = "Generic PLA";
+    data.project_printer.printer_changes.set_key_value("printable_height", new ConfigOptionFloat(200.));
+
+    PrinterSlotsData loaded;
+    REQUIRE(printer_slots_from_json(printer_slots_to_json(data), loaded));
+    CHECK(loaded.active_slot == 1);
+    CHECK(loaded.project_printer.printer == "Ender 3 V2");
+    CHECK_THAT(loaded.project_printer.printer_changes.opt_float("printable_height"), WithinAbs(200., 1e-9));
+    REQUIRE(loaded.slots.size() == 2);
+    CHECK(loaded.slots[0].printer == "Voron 0.1");
+    CHECK(loaded.slots[0].print == "0.20mm Voron");
+    CHECK(loaded.slots[0].filaments == std::vector<std::string>{"Generic PLA", "Generic PETG"});
+    CHECK(loaded.slots[0].changed_filament == "Generic PLA");
+    CHECK_THAT(loaded.slots[0].print_changes.opt_float("layer_height"), WithinAbs(0.3, 1e-9));
+    CHECK_FALSE(loaded.slots[1].has_changes());
+}
+
+TEST_CASE("Invalid printer slot data is rejected and changes nothing", "[PartPlateRows]")
+{
+    const std::string slot = R"({"printer": "Voron 0.1", "print": "p", "filaments": ["f"], "changed_filament": ""})";
+    const std::string bad  = GENERATE_COPY(
+        std::string(""), std::string("not json"), std::string("[]"),
+        R"({"version": 2, "active_slot": -1, "project_printer": )" + slot + R"(, "slots": []})",
+        R"({"version": "1", "active_slot": -1, "project_printer": )" + slot + R"(, "slots": []})",
+        R"({"version": 1, "active_slot": -1, "project_printer": )" + slot + R"(})",
+        R"({"version": 1, "active_slot": 1, "project_printer": )" + slot + R"(, "slots": [)" + slot + R"(]})",
+        R"({"version": 1, "active_slot": -2, "project_printer": )" + slot + R"(, "slots": []})",
+        R"({"version": 1, "active_slot": -1, "project_printer": )" + slot +
+            R"(, "slots": [{"printer": "", "print": "p", "filaments": [], "changed_filament": ""}]})",
+        R"({"version": 1, "active_slot": -1, "project_printer": )" + slot +
+            R"(, "slots": [{"printer": "x", "print": "p", "filaments": "f", "changed_filament": ""}]})",
+        R"({"version": 1, "active_slot": -1, "project_printer": )" + slot +
+            R"(, "slots": [{"printer": "x", "print": "p", "filaments": [], "changed_filament": "", "print_changes": {"layer_height": 0.3}}]})");
+
+    PrinterSlotsData data;
+    data.active_slot = 0;
+    data.slots.push_back(PrinterSlot{"Keep", "this", {}});
+    CHECK_FALSE(printer_slots_from_json(bad, data));
+    CHECK(data.active_slot == 0);
+    REQUIRE(data.slots.size() == 1);
+    CHECK(data.slots[0].printer == "Keep");
+}
+
+TEST_CASE("Unknown keys in saved preset changes are dropped", "[PartPlateRows]")
+{
+    const std::string json = R"({"version": 1, "active_slot": -1,
+        "project_printer": {"printer": "", "print": "", "filaments": [], "changed_filament": ""},
+        "slots": [{"printer": "Voron 0.1", "print": "p", "filaments": [], "changed_filament": "",
+                   "print_changes": {"layer_height": "0.3", "no_such_option": "1"}}]})";
+    PrinterSlotsData data;
+    REQUIRE(printer_slots_from_json(json, data));
+    REQUIRE(data.slots.size() == 1);
+    CHECK_THAT(data.slots[0].print_changes.opt_float("layer_height"), WithinAbs(0.3, 1e-9));
+    CHECK_FALSE(data.slots[0].print_changes.has("no_such_option"));
+}
+
+TEST_CASE("Loaded printer beds form rows without moving objects", "[PartPlateRows]")
+{
+    PlateFixture   f(3);
+    ModelObject*   object   = f.model.add_object();
+    object->add_volume(make_cube(20., 20., 20.));
+    ModelInstance* instance = object->add_instance();
+    instance->set_offset(Vec3d(500., 500., 10.));
+
+    f.plates.load_printer_beds({PlatePrinterBed{}, small_bed(0)});
+    CHECK(f.plates.has_printer_beds());
+    CHECK(f.plates.get_plate(1)->printer_bed().slot == 0);
+    CHECK_FALSE(f.plates.get_plate(2)->printer_bed().assigned());
+    CHECK_THAT(f.origin(1).y(), WithinAbs(-(120. + gap * project_size), 1e-6));
+    check_size(f.plates.get_plate(1), 120., 120.);
+    // The file already holds the row positions.
+    CHECK_THAT(instance->get_offset().x(), WithinAbs(500., 1e-9));
+    CHECK_THAT(instance->get_offset().y(), WithinAbs(500., 1e-9));
+}
+
+TEST_CASE("Loaded beds with unknown slots or invalid shapes are dropped", "[PartPlateRows]")
+{
+    PlateFixture    f(2);
+    PlatePrinterBed bed     = small_bed(0);
+    const int       variant = GENERATE(0, 1, 2);
+    switch (variant) {
+    case 0: bed.slot = 2; break;
+    case 1: bed.shape.resize(2); break;
+    case 2: bed.height = -1.; break;
+    }
+    f.plates.load_printer_beds({PlatePrinterBed{}, bed});
+    CHECK_FALSE(f.plates.has_printer_beds());
+    check_size(f.plates.get_plate(1), project_size, project_size);
+}
+
+TEST_CASE("Setting printer slots replaces slots and project printer", "[PartPlateRows]")
+{
+    PlateFixture f(1);
+    f.plates.set_printer_slots({PrinterSlot{"Prusa MK4", "p", {}}}, PrinterSlot{"Ender 3 V2", "q", {}});
+    REQUIRE(f.plates.printer_slots().size() == 1);
+    CHECK(f.plates.printer_slot(0)->printer == "Prusa MK4");
+    CHECK(f.plates.printer_slot(-1)->printer == "Ender 3 V2");
+    CHECK(f.plates.printer_slot(1) == nullptr);
+}
