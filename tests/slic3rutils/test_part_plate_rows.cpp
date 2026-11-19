@@ -306,3 +306,27 @@ TEST_CASE("Plates created with a bed template join that printer's row", "[PartPl
     REQUIRE(f.plates.create_plate(false) == 3);
     CHECK_FALSE(f.plates.get_plate(3)->printer_bed().assigned());
 }
+
+TEST_CASE("A slot keeps unsaved preset changes", "[PartPlateRows]")
+{
+    PrinterSlot slot{"Trident", "0.20mm Standard", {"Generic PLA"}};
+    CHECK_FALSE(slot.has_changes());
+    slot.print_changes.set_key_value("layer_height", new ConfigOptionFloat(0.3));
+    slot.changed_filament = "Generic PLA";
+    CHECK(slot.has_changes());
+
+    std::stringstream data;
+    {
+        cereal::BinaryOutputArchive out(data);
+        out(slot);
+    }
+    PrinterSlot loaded;
+    {
+        cereal::BinaryInputArchive in(data);
+        in(loaded);
+    }
+    CHECK(loaded.has_changes());
+    CHECK_THAT(loaded.print_changes.opt_float("layer_height"), WithinAbs(0.3, 1e-9));
+    CHECK(loaded.printer_changes.empty());
+    CHECK(loaded.changed_filament == "Generic PLA");
+}

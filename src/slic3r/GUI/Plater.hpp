@@ -360,6 +360,8 @@ public:
     void update_project_dirty_from_presets();
     // Plates whose results depend on the presets.
     void invalidate_plates_for_presets(Preset::Type type);
+    // Offers each other printer's unsaved changes.
+    bool check_printer_slot_changes(const wxString& caption, const wxString& header);
     void normalize_bed_types(bool printer_setting_changed);
     int  save_project_if_dirty(const wxString& reason);
     void reset_project_dirty_after_save();

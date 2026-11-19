@@ -7286,10 +7286,9 @@ struct Plater::priv
     void invalidate_plates_for_presets(Preset::Type type);
     void update_model_print_params();
     bool multi_printer_enabled() const;
-    bool can_leave_printer_slot(int plate_index);
-    bool can_switch_printer_slot(int slot);
-    bool can_slice_all_printers();
     int first_plate_of_printer(const std::string& printer);
+    void stash_preset_changes(PrinterSlot& slot);
+    void restore_preset_changes(PrinterSlot& slot);
     void activate_printer_slot();
     bool assign_plate_printer(int plate_index, const std::string& printer);
     //BBS: add a flag to ignore cancel event
@@ -14160,11 +14159,6 @@ void Plater::priv::on_action_slice_all(SimpleEvent&)
             }
         }
 
-        if (!can_slice_all_printers()) {
-            q->select_view_3D("3D");
-            return;
-        }
-
         //BBS update extruder params and speed table before slicing
         const Slic3r::DynamicPrintConfig& config = wxGetApp().preset_bundle->full_config();
         auto& print = q->get_partplate_list().get_current_fff_print();
@@ -15449,23 +15443,6 @@ bool Plater::priv::multi_printer_enabled() const
     return wxGetApp().app_config->get_bool("multi_printer_projects");
 }
 
-bool Plater::priv::can_leave_printer_slot(int plate_index)
-{
-    const PartPlate* target = partplate_list.get_plate(plate_index);
-    return target == nullptr || can_switch_printer_slot(target->printer_bed().slot);
-}
-
-bool Plater::priv::can_switch_printer_slot(int slot)
-{
-    if (!multi_printer_enabled() || slot == m_active_printer_slot)
-        return true;
-    if (!wxGetApp().has_current_preset_changes())
-        return true;
-    return wxGetApp().check_and_keep_current_preset_changes(_L("Switch printer"),
-        _L("This plate uses another printer. Save or discard the changes to the current presets first."),
-        ActionButtons::SAVE);
-}
-
 // First plate of another slot using this printer.
 int Plater::priv::first_plate_of_printer(const std::string& printer)
 {
@@ -15483,13 +15460,42 @@ int Plater::priv::first_plate_of_printer(const std::string& printer)
     return -1;
 }
 
-// Ask once before slicing plates of several printers.
-bool Plater::priv::can_slice_all_printers()
+// Unsaved changes move into the slot.
+void Plater::priv::stash_preset_changes(PrinterSlot& slot)
 {
-    for (int i = 0; i < partplate_list.get_plate_count(); ++i)
-        if (!can_leave_printer_slot(i))
+    PresetBundle& bundle = *wxGetApp().preset_bundle;
+    auto stash = [](PresetCollection& presets, DynamicPrintConfig& changes) {
+        changes.clear();
+        if (!presets.current_is_dirty())
             return false;
-    return true;
+        changes.apply_only(presets.get_edited_preset().config, presets.current_dirty_options());
+        presets.discard_current_changes();
+        return true;
+    };
+    bool stashed = stash(bundle.printers, slot.printer_changes);
+    stashed |= stash(bundle.prints, slot.print_changes);
+    slot.changed_filament = bundle.filaments.get_selected_preset_name();
+    stashed |= stash(bundle.filaments, slot.filament_changes);
+    if (stashed)
+        q->set_plater_dirty(true);
+}
+
+// Orca's transfer cache reapplies them as edits.
+void Plater::priv::restore_preset_changes(PrinterSlot& slot)
+{
+    PresetBundle& bundle = *wxGetApp().preset_bundle;
+    auto restore = [](Preset::Type type, PresetCollection& presets, DynamicPrintConfig& changes, const std::string& name) {
+        if (changes.empty() || presets.get_selected_preset_name() != name)
+            return;
+        Tab* tab = wxGetApp().get_tab(type);
+        tab->cache_config_diff(changes.keys(), &changes);
+        tab->apply_config_from_cache();
+        tab->load_current_preset();
+        changes.clear();
+    };
+    restore(Preset::TYPE_PRINTER, bundle.printers, slot.printer_changes, slot.printer);
+    restore(Preset::TYPE_PRINT, bundle.prints, slot.print_changes, slot.print);
+    restore(Preset::TYPE_FILAMENT, bundle.filaments, slot.filament_changes, slot.changed_filament);
 }
 
 void Plater::priv::activate_printer_slot()
@@ -15505,6 +15511,7 @@ void Plater::priv::activate_printer_slot()
         leaving->printer   = bundle.printers.get_selected_preset_name();
         leaving->print     = bundle.prints.get_selected_preset_name();
         leaving->filaments = bundle.filament_presets;
+        stash_preset_changes(*leaving);
     }
     const PrinterSlot* entering = partplate_list.printer_slot(slot);
     if (entering == nullptr || entering->printer.empty()) {
@@ -15538,6 +15545,7 @@ void Plater::priv::activate_printer_slot()
     }
     if (filaments_changed)
         wxGetApp().load_current_presets(false);
+    restore_preset_changes(*partplate_list.printer_slot(slot));
     q->on_config_change(bundle.full_config());
 }
 
@@ -15592,6 +15600,37 @@ void Plater::priv::invalidate_plates_for_presets(Preset::Type type)
         if (!multi || slot == m_active_printer_slot || shares_preset(slot))
             plate->update_slice_result_valid_state(false);
     }
+}
+
+bool Plater::check_printer_slot_changes(const wxString& caption, const wxString& header)
+{
+    if (!p->multi_printer_enabled())
+        return true;
+    PartPlateList& plates = p->partplate_list;
+    const int original = plates.get_curr_plate_index();
+    std::vector<int> changed;
+    for (int slot = -1; slot < int(plates.printer_slots().size()); ++slot) {
+        const PrinterSlot* other = plates.printer_slot(slot);
+        if (slot != p->m_active_printer_slot && other != nullptr && other->has_changes())
+            changed.push_back(slot);
+    }
+    bool ok = true;
+    for (int slot : changed) {
+        int plate = -1;
+        for (int i = 0; i < plates.get_plate_count() && plate < 0; ++i)
+            if (plates.get_plate(i)->printer_bed().slot == slot)
+                plate = i;
+        if (plate < 0)
+            continue;
+        select_plate(plate);
+        if (!wxGetApp().check_and_save_current_preset_changes(caption, header)) {
+            ok = false;
+            break;
+        }
+    }
+    if (!changed.empty())
+        select_plate(original);
+    return ok;
 }
 
 void Plater::invalidate_plates_for_presets(Preset::Type type)
@@ -16637,6 +16676,9 @@ int Plater::new_project(bool skip_confirm, bool silent, const wxString& project_
     bool transfer_preset_changes = false;
     // BBS: save confirm
     auto check = [this,&transfer_preset_changes](bool yes_or_no) {
+        // Other printers' changes are not in projects.
+        if (!check_printer_slot_changes(_L("Creating a new project"), _L("Some presets are modified.")))
+            return false;
         m_new_project_and_check_state = true;
         wxString header = _L("Some presets are modified.") + "\n" +
             (yes_or_no ? _L("You can keep the modified presets for the new project or discard them") :
@@ -16728,6 +16770,8 @@ void Plater::load_project(wxString const& filename2,
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__;
     auto filename = filename2;
     auto check = [&filename, this] (bool yes_or_no) {
+        if (!check_printer_slot_changes(_L("Load project"), _L("Some presets are modified.")))
+            return false;
         if (!yes_or_no && !wxGetApp().check_and_save_current_preset_changes(_L("Load project"),
                 _L("Some presets are modified.")))
             return false;
@@ -18831,8 +18875,9 @@ void Plater::load_gcode(const wxString& filename)
 
     // BSS: create a new project when load_gcode, force close previous one
     if (file_config) {
-        auto check = [](bool yes_or_no) {
-            return yes_or_no || wxGetApp().check_and_save_current_preset_changes(_L("Load project"), _L("Some presets are modified."));
+        auto check = [this](bool yes_or_no) {
+            return check_printer_slot_changes(_L("Load project"), _L("Some presets are modified.")) &&
+                   (yes_or_no || wxGetApp().check_and_save_current_preset_changes(_L("Load project"), _L("Some presets are modified.")));
         };
         if (close_with_confirm(check) == wxID_CANCEL || new_project(true, true) != wxID_YES)
             return;
@@ -23410,8 +23455,6 @@ int Plater::select_plate(int plate_index, bool need_slice)
 {
     int ret;
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: plate %2%, need_slice %3% ")%__LINE__ %plate_index  %need_slice;
-    if (!p->can_leave_printer_slot(plate_index))
-        return -1;
     take_snapshot("select partplate!");
     ret = p->partplate_list.select_plate(plate_index);
     if (!ret)
@@ -24013,8 +24056,6 @@ void Plater::open_platesettings_dialog(wxCommandEvent& evt) {
         return;
     const std::string printer = printer_choice == 0 ? std::string() : printer_names.at(printer_choice - 1);
     const int plate = p->partplate_list.get_curr_plate_index();
-    if (!p->can_leave_printer_slot(plate))
-        return;
     take_snapshot("change plate printer");
     if (!p->assign_plate_printer(plate, printer)) {
         show_error(this, _L("The selected printer cannot be used for this plate."));
@@ -24105,8 +24146,6 @@ int Plater::select_plate_by_hover_id(int hover_id, bool right_click, bool isModi
     if (action == 0)
     {
         //select plate
-        if (!p->can_leave_printer_slot(plate_index))
-            return -1;
         ret = p->partplate_list.select_plate(plate_index);
         if (!ret) {
             p->activate_printer_slot();
@@ -24373,8 +24412,6 @@ int Plater::add_plate()
         return -1;
     // A new plate uses the selected plate's printer.
     const PlatePrinterBed bed = p->partplate_list.get_curr_plate()->printer_bed();
-    if (!p->can_switch_printer_slot(bed.slot))
-        return -1;
     take_snapshot("add partplate");
     int new_plate = p->partplate_list.create_plate();
     if (new_plate < 0)

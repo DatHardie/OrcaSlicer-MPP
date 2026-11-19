@@ -139,8 +139,17 @@ struct PrinterSlot
     std::string printer;
     std::string print;
     std::vector<std::string> filaments;
+    // Unsaved preset changes while another slot is active.
+    DynamicPrintConfig printer_changes;
+    DynamicPrintConfig print_changes;
+    DynamicPrintConfig filament_changes;
+    std::string changed_filament;
 
-    template<class Archive> void serialize(Archive& ar) { ar(printer, print, filaments); }
+    bool has_changes() const { return !printer_changes.empty() || !print_changes.empty() || !filament_changes.empty(); }
+    template<class Archive> void serialize(Archive& ar)
+    {
+        ar(printer, print, filaments, printer_changes, print_changes, filament_changes, changed_filament);
+    }
 };
 
 class PartPlate : public ObjectBase
