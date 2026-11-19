@@ -120,6 +120,12 @@ struct PlatePrinterBed
     float                height_to_rod{0.f};
 
     bool assigned() const { return slot >= 0; }
+    bool operator==(const PlatePrinterBed& rhs) const
+    {
+        return slot == rhs.slot && shape == rhs.shape && exclude_areas == rhs.exclude_areas &&
+               extruder_areas == rhs.extruder_areas && extruder_heights == rhs.extruder_heights &&
+               height == rhs.height && height_to_lid == rhs.height_to_lid && height_to_rod == rhs.height_to_rod;
+    }
 
     template<class Archive> void serialize(Archive& ar)
     {

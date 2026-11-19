@@ -7282,9 +7282,12 @@ struct Plater::priv
     PartPlateList partplate_list;
     // Printer slot whose presets are active.
     int m_active_printer_slot{-1};
+    bool m_switching_printer_slot{false};
+    void invalidate_plates_for_presets();
     bool multi_printer_enabled() const;
     bool can_leave_printer_slot(int plate_index);
     bool can_switch_printer_slot(int slot);
+    bool can_slice_all_printers();
     void activate_printer_slot();
     bool assign_plate_printer(int plate_index, const std::string& printer);
     //BBS: add a flag to ignore cancel event
@@ -13471,10 +13474,7 @@ void Plater::priv::on_select_preset(wxCommandEvent &evt)
     Slic3r::put_other_changes();
 
     // update slice state and set bedtype default for 3rd-party printer
-    auto plate_list = partplate_list.get_plate_list();
-    for (auto plate : plate_list) {
-         plate->update_slice_result_valid_state(false);
-    }
+    invalidate_plates_for_presets();
 }
 
 void Plater::priv::on_slicing_update(SlicingStatusEvent &evt)
@@ -14146,6 +14146,11 @@ void Plater::priv::on_action_slice_all(SimpleEvent&)
                     return;
                 }
             }
+        }
+
+        if (!can_slice_all_printers()) {
+            q->select_view_3D("3D");
+            return;
         }
 
         //BBS update extruder params and speed table before slicing
@@ -15449,6 +15454,15 @@ bool Plater::priv::can_switch_printer_slot(int slot)
         ActionButtons::SAVE);
 }
 
+// Ask once before slicing plates of several printers.
+bool Plater::priv::can_slice_all_printers()
+{
+    for (int i = 0; i < partplate_list.get_plate_count(); ++i)
+        if (!can_leave_printer_slot(i))
+            return false;
+    return true;
+}
+
 void Plater::priv::activate_printer_slot()
 {
     if (!multi_printer_enabled())
@@ -15470,6 +15484,9 @@ void Plater::priv::activate_printer_slot()
 
     const int previous    = m_active_printer_slot;
     m_active_printer_slot = slot;
+    // Switching keeps the other plates' results.
+    m_switching_printer_slot = true;
+    ScopeGuard switching([this]() { m_switching_printer_slot = false; });
     if (bundle.printers.get_selected_preset_name() != entering->printer)
         wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(entering->printer, false, "", false, true);
     if (bundle.printers.get_selected_preset_name() != entering->printer) {
@@ -15508,6 +15525,21 @@ bool Plater::priv::assign_plate_printer(int plate_index, const std::string& prin
         bed.extruder_heights = opt->values;
     bed.slot = partplate_list.find_or_add_printer_slot(printer);
     return partplate_list.set_plate_printer_bed(plate_index, std::move(bed));
+}
+
+void Plater::priv::invalidate_plates_for_presets()
+{
+    if (m_switching_printer_slot)
+        return;
+    const bool multi = multi_printer_enabled();
+    for (PartPlate* plate : partplate_list.get_plate_list())
+        if (!multi || plate->printer_bed().slot == m_active_printer_slot)
+            plate->update_slice_result_valid_state(false);
+}
+
+void Plater::invalidate_plates_for_presets()
+{
+    p->invalidate_plates_for_presets();
 }
 
 bool Plater::priv::can_delete() const

@@ -7126,14 +7126,26 @@ bool PartPlateList::set_slot_printer_bed(int slot, PlatePrinterBed bed)
 	if (!valid_printer_bed(bed))
 		return false;
 
-	reload_all_objects();
-	bool changed = false;
+	// Only shape or height move plates.
+	bool changed = false, moved = false;
+	for (const PartPlate* plate : m_plate_list) {
+		const PlatePrinterBed& old_bed = plate->m_printer_bed;
+		if (old_bed.slot != slot || old_bed == bed)
+			continue;
+		changed = true;
+		moved |= old_bed.shape != bed.shape || old_bed.height != bed.height;
+	}
+	if (!changed)
+		return true;
+	if (moved)
+		reload_all_objects();
 	for (PartPlate* plate : m_plate_list)
 		if (plate->m_printer_bed.slot == slot) {
 			plate->m_printer_bed = bed;
-			changed = true;
+			if (!moved)
+				set_plate_shape(*plate, compute_shape_position(plate->get_index(), m_plate_cols));
 		}
-	if (changed)
+	if (moved)
 		apply_printer_beds(true);
 	return true;
 }
@@ -8825,7 +8837,7 @@ int PartPlateList::load_gcode_files()
 			//BoundingBoxf3   print_volume = m_plate_list[i]->get_bounding_box(false);
 			//print_volume.max(2) = this->m_plate_height;
 			//print_volume.min(2) = -1e10;
-			m_model->update_print_volume_state({m_plate_list[i]->get_shape(), this->m_plate_height, m_plate_list[i]->get_extruder_areas(), m_plate_list[i]->get_extruder_heights() });
+			m_model->update_print_volume_state({m_plate_list[i]->get_shape(), plate_bed_height(*m_plate_list[i]), m_plate_list[i]->get_extruder_areas(), m_plate_list[i]->get_extruder_heights() });
 
 			if (!m_plate_list[i]->load_gcode_from_file(m_plate_list[i]->m_gcode_path_from_3mf))
 				ret ++;

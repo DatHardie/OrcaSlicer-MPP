@@ -253,3 +253,27 @@ TEST_CASE("A plate's own bed survives an undo snapshot round trip", "[PartPlateR
     CHECK(slot.printer == "Trident");
     CHECK(slot.print == "0.20mm Standard");
 }
+
+TEST_CASE("Reapplying a slot's unchanged bed keeps slice results", "[PartPlateRows]")
+{
+    PlateFixture f(3);
+    REQUIRE(f.plates.set_plate_printer_bed(1, small_bed(0)));
+    for (int i = 0; i < 3; ++i)
+        f.plates.get_plate(i)->update_slice_result_valid_state(true);
+
+    REQUIRE(f.plates.set_slot_printer_bed(0, small_bed(0)));
+    for (int i = 0; i < 3; ++i)
+        CHECK(f.plates.get_plate(i)->is_slice_result_valid());
+
+    PlatePrinterBed clearance = small_bed(0);
+    clearance.height_to_lid   = 30.f;
+    clearance.exclude_areas   = square(5.);
+    REQUIRE(f.plates.set_slot_printer_bed(0, clearance));
+    CHECK(f.plates.get_plate(1)->is_slice_result_valid());
+    CHECK(f.plates.get_plate(1)->printer_bed().height_to_lid == 30.f);
+
+    PlatePrinterBed taller = small_bed(0);
+    taller.height          = 200.;
+    REQUIRE(f.plates.set_slot_printer_bed(0, taller));
+    CHECK_FALSE(f.plates.get_plate(1)->is_slice_result_valid());
+}
