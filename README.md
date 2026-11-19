@@ -17,8 +17,8 @@ Works now:
 Planned:
 
 - The project file stores the printer of each plate.
-- Adding a plate asks for its printer.
 - Printing sends each plate to its printer.
+- A project view lists the printers of the project, and printers can be added there.
 
 ## Use
 
