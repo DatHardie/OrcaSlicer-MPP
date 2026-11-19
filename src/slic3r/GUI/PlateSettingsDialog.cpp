@@ -415,7 +415,7 @@ PlateSettingsDialog::PlateSettingsDialog(wxWindow* parent, const wxString& title
     top_sizer->Add(m_printer_txt, 0, wxALIGN_CENTER_VERTICAL | wxALIGN_LEFT | wxTOP | wxBOTTOM, FromDIP(5));
     top_sizer->Add(m_printer_choice, 0, wxALIGN_CENTER_VERTICAL | wxALIGN_RIGHT | wxTOP | wxBOTTOM, FromDIP(5));
     // Sized with the dialog, not shown later.
-    const bool multi_printer = wxGetApp().app_config->get_bool("multi_printer_projects");
+    const bool multi_printer = wxGetApp().plater()->multi_printer_enabled();
     m_printer_txt->Show(multi_printer);
     m_printer_choice->Show(multi_printer);
 

@@ -7280,6 +7280,8 @@ struct Plater::priv
     Camera camera;
     //BBS: partplate related structure
     PartPlateList partplate_list;
+    // Read once; toggling it needs a restart.
+    const bool m_multi_printer{wxGetApp().app_config->get_bool("multi_printer_projects")};
     // Printer slot whose presets are active.
     int m_active_printer_slot{-1};
     bool m_switching_printer_slot{false};
@@ -15440,7 +15442,12 @@ void Plater::priv::set_bed_shape(const Pointfs       &shape,
 
 bool Plater::priv::multi_printer_enabled() const
 {
-    return wxGetApp().app_config->get_bool("multi_printer_projects");
+    return m_multi_printer;
+}
+
+bool Plater::multi_printer_enabled() const
+{
+    return p->multi_printer_enabled();
 }
 
 // First plate of another slot using this printer.

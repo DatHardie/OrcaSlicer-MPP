@@ -362,6 +362,8 @@ public:
     void invalidate_plates_for_presets(Preset::Type type);
     // Offers each other printer's unsaved changes.
     bool check_printer_slot_changes(const wxString& caption, const wxString& header);
+    // Option value at startup.
+    bool multi_printer_enabled() const;
     void normalize_bed_types(bool printer_setting_changed);
     int  save_project_if_dirty(const wxString& reason);
     void reset_project_dirty_after_save();
