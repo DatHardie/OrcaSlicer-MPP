@@ -105,6 +105,21 @@ struct WipeTowerRelocation
     bool overlaps_objects = false; // no spot on the plate was clear of the objects, so it sits on one
 };
 
+// Plate's own printer bed; slot -1: none.
+struct PlatePrinterBed
+{
+    int                  slot{-1};
+    Pointfs              shape;
+    Pointfs              exclude_areas;
+    std::vector<Pointfs> extruder_areas;
+    std::vector<double>  extruder_heights;
+    double               height{0.};
+    float                height_to_lid{0.f};
+    float                height_to_rod{0.f};
+
+    bool assigned() const { return slot >= 0; }
+};
+
 class PartPlate : public ObjectBase
 {
 public:
@@ -223,6 +238,7 @@ private:
 
     // BBS
     DynamicPrintConfig m_config;
+    PlatePrinterBed m_printer_bed;
 
     // SoftFever
     // part plate name
@@ -353,6 +369,7 @@ public:
     void reset_skirt_start_angle();
 
     DynamicPrintConfig* config() { return &m_config; }
+    const PlatePrinterBed& printer_bed() const { return m_printer_bed; }
 
     // set print sequence per plate
     //bool print_seq_same_global = true;
@@ -859,6 +876,11 @@ class PartPlateList : public ObjectBase
     Vec3d compute_origin_for_unprintable();
     //compute shape position
     Vec2d compute_shape_position(int index, int cols);
+    Vec2d printer_row_position(int index) const;
+    int plate_bed_width(const PartPlate& plate) const;
+    int plate_bed_depth(const PartPlate& plate) const;
+    double plate_bed_height(const PartPlate& plate) const;
+    void set_plate_shape(PartPlate& plate, const Vec2d& pos);
     //generate icon textures
     void generate_icon_textures();
     void release_icon_textures();
@@ -929,6 +951,11 @@ public:
 
     //reset partplate to init states
     void reinit();
+
+    // Plates with own printer beds exist.
+    bool has_printer_beds() const;
+    // Assign, or clear with slot -1, a bed.
+    bool set_plate_printer_bed(int index, PlatePrinterBed bed);
 
     //get the plate stride
     double plate_stride_x();

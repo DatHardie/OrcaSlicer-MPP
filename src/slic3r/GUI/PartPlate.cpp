@@ -7,6 +7,7 @@
 #include <boost/lexical_cast.hpp>
 #include <cstddef>
 #include <algorithm>
+#include <limits>
 #include "libslic3r/Color.hpp"
 #include "libslic3r/Point.hpp"
 #include "libslic3r/Config.hpp"
@@ -17,6 +18,7 @@
 #include <functional>
 #include <iterator>
 #include "libslic3r/BuildVolume.hpp"
+#include "libslic3r/PrinterRowLayout.hpp"
 #include "libslic3r/GCode/WipeTower.hpp"
 #include "libslic3r/CustomGCode.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
@@ -5993,6 +5995,10 @@ Vec3d PartPlateList::compute_origin_using_new_size(int i, int new_width, int new
 //compute the origin for printable plate with index i
 Vec3d PartPlateList::compute_origin_for_unprintable()
 {
+	if (has_printer_beds()) {
+		const Vec2d pos = printer_row_position(-1);
+		return Vec3d(pos.x(), pos.y(), 0.);
+	}
 	int max_count = m_plate_cols * m_plate_cols;
 	if (m_plate_count == max_count)
 		return compute_origin(max_count + m_plate_cols - 1, m_plate_cols + 1);
@@ -6003,6 +6009,9 @@ Vec3d PartPlateList::compute_origin_for_unprintable()
 //compute shape position
 Vec2d PartPlateList::compute_shape_position(int index, int cols)
 {
+	if (has_printer_beds())
+		return printer_row_position(index);
+
 	Vec2d pos;
 	int row, col;
 
@@ -6546,7 +6555,8 @@ int PartPlateList::create_plate(bool adjust_position)
 	int cols = compute_colum_count(new_index + 1);
 	int old_cols = compute_colum_count(new_index);
 	// Orca: Rebuild plate membership before moving instances during a grid reflow.
-	if (adjust_position && old_cols != cols)
+	const bool rows = has_printer_beds();
+	if (adjust_position && (old_cols != cols || rows))
 		reload_all_objects();
 
 	origin = compute_origin(new_index, cols);
@@ -6570,7 +6580,7 @@ int PartPlateList::create_plate(bool adjust_position)
 	plate->set_shape(m_shape, m_exclude_areas, m_extruder_areas, m_extruder_heights, pos, m_height_to_lid, m_height_to_rod);
 	m_plate_list.emplace_back(plate);
 	update_plate_cols();
-	if (old_cols != cols)
+	if (old_cols != cols || rows)
 	{
 		BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(":old_cols %1% -> new_cols %2%") % old_cols % cols;
 		//update the origin of each plate
@@ -6734,6 +6744,7 @@ int PartPlateList::delete_plate(int index)
 
 	int cols = compute_colum_count(m_plate_list.size() - 1);
 	int old_cols = compute_colum_count(m_plate_list.size());
+	const bool had_rows = has_printer_beds();
 
 	m_plate_list.erase(m_plate_list.begin() + index);
 	update_plate_cols();
@@ -6741,7 +6752,7 @@ int PartPlateList::delete_plate(int index)
 	//move this plate's instance to the end
 	Vec3d current_origin;
 	current_origin = compute_origin_for_unprintable();
-	plate->set_pos_and_size(current_origin, m_plate_width, m_plate_depth, m_plate_height, true);
+	plate->set_pos_and_size(current_origin, plate_bed_width(*plate), plate_bed_depth(*plate), plate_bed_height(*plate), true);
 
 	//update the plates after it
 	for (unsigned int i = index; i < (unsigned int)m_plate_list.size(); ++i)
@@ -6751,11 +6762,11 @@ int PartPlateList::delete_plate(int index)
 
 		plate->set_index(i);
 		Vec3d origin = compute_origin(i, m_plate_cols);
-		plate->set_pos_and_size(origin, m_plate_width, m_plate_depth, m_plate_height, true);
+		plate->set_pos_and_size(origin, plate_bed_width(*plate), plate_bed_depth(*plate), plate_bed_height(*plate), true);
 
 		//update render shapes
 		Vec2d pos = compute_shape_position(i, m_plate_cols);
-		plate->set_shape(m_shape, m_exclude_areas, m_extruder_areas, m_extruder_heights, pos, m_height_to_lid, m_height_to_rod);
+		set_plate_shape(*plate, pos);
 	}
 
 	//update current_plate if delete current
@@ -6774,7 +6785,7 @@ int PartPlateList::delete_plate(int index)
 
 	unprintable_plate.set_index(m_plate_list.size());
 
-	if (old_cols != cols)
+	if (old_cols != cols || had_rows)
 	{
 		//update the origin of each plate
 		update_all_plates_pos_and_size();
@@ -7014,6 +7025,86 @@ double PartPlateList::plate_stride_y()
 	return m_plate_depth * (1. + LOGICAL_PART_PLATE_GAP);
 }
 
+bool PartPlateList::has_printer_beds() const
+{
+	return std::any_of(m_plate_list.begin(), m_plate_list.end(),
+		[](const PartPlate* plate) { return plate->m_printer_bed.assigned(); });
+}
+
+int PartPlateList::plate_bed_width(const PartPlate& plate) const
+{
+	if (!plate.m_printer_bed.assigned())
+		return m_plate_width;
+	return int(BoundingBoxf(plate.m_printer_bed.shape).size().x());
+}
+
+int PartPlateList::plate_bed_depth(const PartPlate& plate) const
+{
+	if (!plate.m_printer_bed.assigned())
+		return m_plate_depth;
+	return int(BoundingBoxf(plate.m_printer_bed.shape).size().y());
+}
+
+double PartPlateList::plate_bed_height(const PartPlate& plate) const
+{
+	return plate.m_printer_bed.assigned() ? plate.m_printer_bed.height : m_plate_height;
+}
+
+// Index -1 is a new row below all.
+Vec2d PartPlateList::printer_row_position(int index) const
+{
+	const Vec2d project_size(std::max(1, m_plate_width), std::max(1, m_plate_depth));
+	std::vector<RowLayoutPlate> plates;
+	for (const PartPlate* plate : m_plate_list) {
+		const bool own = plate->m_printer_bed.assigned();
+		plates.push_back({plate->m_printer_bed.slot,
+			own ? Vec2d(std::max(1, plate_bed_width(*plate)), std::max(1, plate_bed_depth(*plate))) : project_size});
+	}
+	// Indices past the end are new plates.
+	while (int(plates.size()) <= index)
+		plates.push_back({-1, project_size});
+	if (index < 0) {
+		plates.push_back({std::numeric_limits<int>::min(), project_size});
+		index = int(plates.size()) - 1;
+	}
+	return printer_row_offsets(plates, LOGICAL_PART_PLATE_GAP)[index];
+}
+
+void PartPlateList::set_plate_shape(PartPlate& plate, const Vec2d& pos)
+{
+	const PlatePrinterBed& bed = plate.m_printer_bed;
+	if (bed.assigned())
+		plate.set_shape(bed.shape, bed.exclude_areas, bed.extruder_areas, bed.extruder_heights, pos, bed.height_to_lid, bed.height_to_rod);
+	else
+		plate.set_shape(m_shape, m_exclude_areas, m_extruder_areas, m_extruder_heights, pos, m_height_to_lid, m_height_to_rod);
+}
+
+bool PartPlateList::set_plate_printer_bed(int index, PlatePrinterBed bed)
+{
+	if (index < 0 || index >= int(m_plate_list.size()))
+		return false;
+	if (bed.assigned()) {
+		const bool finite = std::all_of(bed.shape.begin(), bed.shape.end(), [](const Vec2d& p) { return p.allFinite(); });
+		if (bed.shape.size() < 3 || !finite || !std::isfinite(bed.height) || bed.height <= 0.)
+			return false;
+		const Vec2d size = BoundingBoxf(bed.shape).size();
+		if (size.x() < 1. || size.y() < 1.)
+			return false;
+	} else {
+		bed = PlatePrinterBed{};
+	}
+
+	reload_all_objects();
+	m_plate_list[index]->m_printer_bed = std::move(bed);
+	update_all_plates_pos_and_size(true, true);
+	set_shapes(m_shape, m_exclude_areas, m_wrapping_exclude_areas, m_extruder_areas, m_extruder_heights, m_logo_texture_filename, m_height_to_lid, m_height_to_rod);
+	if (m_plater) {
+		Vec2d pos = compute_shape_position(m_current_plate, m_plate_cols);
+		m_plater->set_bed_position(pos);
+	}
+	return true;
+}
+
 //get the plate counts, not including the invalid plate
 int PartPlateList::get_plate_count() const
 {
@@ -7050,7 +7141,7 @@ void PartPlateList::update_all_plates_pos_and_size(bool adjust_position, bool wi
 
 		//compute origin1 for PartPlate
 		origin1 = compute_origin(i, m_plate_cols);
-		plate->set_pos_and_size(origin1, m_plate_width, m_plate_depth, m_plate_height, adjust_position, do_clear);
+		plate->set_pos_and_size(origin1, plate_bed_width(*plate), plate_bed_depth(*plate), plate_bed_height(*plate), adjust_position, do_clear);
 
 		// set default wipe pos when switch plate
         if (switch_plate_type && m_plater/* && plate->get_used_extruders().size() <= 0*/) {
@@ -7095,12 +7186,15 @@ int PartPlateList::move_plate_to_index(int old_index, int new_index)
 		m_plate_list[i]->set_index(i);
 
 		origin = compute_origin(i, m_plate_cols);
-		m_plate_list[i]->set_pos_and_size(origin, m_plate_width, m_plate_depth, m_plate_height, true);
+		m_plate_list[i]->set_pos_and_size(origin, plate_bed_width(*m_plate_list[i]), plate_bed_depth(*m_plate_list[i]), plate_bed_height(*m_plate_list[i]), true);
 	}
-	origin = compute_origin(new_index, m_plate_cols);
 	m_plate_list[new_index] = plate;
 	plate->set_index(new_index);
-	plate->set_pos_and_size(origin, m_plate_width, m_plate_depth, m_plate_height, true);
+	origin = compute_origin(new_index, m_plate_cols);
+	plate->set_pos_and_size(origin, plate_bed_width(*plate), plate_bed_depth(*plate), plate_bed_height(*plate), true);
+	// Rows may shift other plates too.
+	if (has_printer_beds())
+		update_all_plates_pos_and_size(true, true);
 
 	//update the new plate index
 	m_current_plate = new_index;
@@ -7581,8 +7675,9 @@ bool PartPlateList::preprocess_arrange_polygon(int obj_index, int instance_index
 				arrange_polygon.bed_idx = i;
 				arrange_polygon.row = i / m_plate_cols;
 				arrange_polygon.col = i % m_plate_cols;
-				arrange_polygon.translation(X) -= scaled<double>(plate_stride_x() * arrange_polygon.col);
-				arrange_polygon.translation(Y) += scaled<double>(plate_stride_y() * arrange_polygon.row);
+				const Vec2d pos = compute_shape_position(i, m_plate_cols);
+				arrange_polygon.translation(X) -= scaled<double>(pos.x());
+				arrange_polygon.translation(Y) -= scaled<double>(pos.y());
 			}
 			else
 			{
@@ -7592,8 +7687,9 @@ bool PartPlateList::preprocess_arrange_polygon(int obj_index, int instance_index
 					arrange_polygon.bed_idx = i - lockplate_cnt;
 					arrange_polygon.row = i / m_plate_cols;
 					arrange_polygon.col = i % m_plate_cols;
-					arrange_polygon.translation(X) -= scaled<double>(plate_stride_x() * arrange_polygon.col);
-					arrange_polygon.translation(Y) += scaled<double>(plate_stride_y() * arrange_polygon.row);
+					const Vec2d pos = compute_shape_position(i, m_plate_cols);
+					arrange_polygon.translation(X) -= scaled<double>(pos.x());
+					arrange_polygon.translation(Y) -= scaled<double>(pos.y());
 				}
 			}
 			BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": obj_id %1% instance_id %2% already in plate %3%, locked %4%, row %5%, col %6%\n") % obj_index % instance_index % i % locked % arrange_polygon.row % arrange_polygon.col;
@@ -7630,8 +7726,9 @@ bool PartPlateList::preprocess_arrange_polygon_other_locked(int obj_index, int i
 				arrange_polygon.bed_idx = i;
 				arrange_polygon.row = i / m_plate_cols;
 				arrange_polygon.col = i % m_plate_cols;
-				arrange_polygon.translation(X) -= scaled<double>(plate_stride_x() * arrange_polygon.col);
-				arrange_polygon.translation(Y) += scaled<double>(plate_stride_y() * arrange_polygon.row);
+				const Vec2d pos = compute_shape_position(i, m_plate_cols);
+				arrange_polygon.translation(X) -= scaled<double>(pos.x());
+				arrange_polygon.translation(Y) -= scaled<double>(pos.y());
 				//BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": obj_id %1% instance_id %2% in plate %3%, locked %4%, row %5%, col %6%\n") % obj_index % instance_index % i % locked % arrange_polygon.row % arrange_polygon.col;
 				return locked;
 			}
@@ -7894,8 +7991,9 @@ void PartPlateList::postprocess_arrange_polygon(arrangement::ArrangePolygon& arr
 	{
 		arrange_polygon.row = arrange_polygon.bed_idx / m_plate_cols;
 		arrange_polygon.col = arrange_polygon.bed_idx % m_plate_cols;
-		arrange_polygon.translation(X) += scaled<double>(plate_stride_x() * arrange_polygon.col);
-		arrange_polygon.translation(Y) -= scaled<double>(plate_stride_y() * arrange_polygon.row);
+		const Vec2d pos = compute_shape_position(arrange_polygon.bed_idx, m_plate_cols);
+		arrange_polygon.translation(X) += scaled<double>(pos.x());
+		arrange_polygon.translation(Y) += scaled<double>(pos.y());
 	}
 
 	return;
@@ -8053,7 +8151,7 @@ bool PartPlateList::set_shapes(const Pointfs              &shape,
 		Vec2d pos;
 
 		pos = compute_shape_position(i, m_plate_cols);
-		plate->set_shape(shape, exclude_areas, extruder_areas, extruder_heights, pos, height_to_lid, height_to_rod);
+		set_plate_shape(*plate, pos);
 	}
 	is_load_bedtype_textures = false; //reload textures
     is_load_extruder_only_area_textures = false; // reload textures
