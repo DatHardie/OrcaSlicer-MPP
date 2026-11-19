@@ -6,12 +6,16 @@ Unofficial fork of [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer). It is
 
 Split a large project across several printers in one OrcaSlicer project, instead of creating a separate project for each printer as is usual today.
 
-One project for several printers with different bed sizes:
+Works now:
 
 - Each plate can use its own printer.
 - Each plate is shown at the bed size of its printer.
 - Selecting a plate switches to its printer, process and filament presets.
 - Each plate is sliced with its own printer.
+- A new plate takes the printer of the selected plate.
+
+Planned:
+
 - The project file stores the printer of each plate.
 - Adding a plate asks for its printer.
 - Printing sends each plate to its printer.
@@ -25,9 +29,8 @@ The plates of each printer form one row. Without plates for other printers, Orca
 
 ## Limitations
 
-- Project files do not store the printers of the plates yet. A saved project opens with all plates on one printer.
-- Adding a plate does not ask for a printer yet. The new plate takes the printer of the selected plate.
-- Printing and sending are not adapted to plates of different printers yet and are untested.
+- A saved project opens with all plates on one printer, because project files do not store the printers yet.
+- Printing and sending are untested with plates of different printers.
 - Tested on Linux only.
 
 ## Build
