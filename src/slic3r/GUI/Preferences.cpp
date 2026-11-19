@@ -1303,6 +1303,17 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxString too
             }
         }
 
+        if (param == "multi_printer_projects" && !checkbox->GetValue()) {
+            MessageDialog msg_dialog(this,
+                _L("Projects whose plates use different printers cannot be used without this option. All plates then use one printer, and objects may lie outside the plates.\n\nTurn it off anyway?"),
+                _L("Warning"), wxICON_WARNING | wxYES_NO | wxNO_DEFAULT);
+            if (msg_dialog.ShowModal() != wxID_YES) {
+                checkbox->SetValue(true);
+                app_config->set_bool(param, true);
+                app_config->save();
+            }
+        }
+
         e.Skip();
     });
 
