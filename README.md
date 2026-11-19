@@ -4,6 +4,8 @@ Unofficial fork of [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer). It is
 
 ## Goal
 
+Split a large project across several printers in one OrcaSlicer project, instead of creating a separate project for each printer as is usual today.
+
 One project for several printers with different bed sizes:
 
 - Each plate can use its own printer.
