@@ -288,3 +288,21 @@ TEST_CASE("Reapplying a slot's unchanged bed keeps slice results", "[PartPlateRo
     REQUIRE(f.plates.set_slot_printer_bed(0, taller));
     CHECK_FALSE(f.plates.get_plate(1)->is_slice_result_valid());
 }
+
+TEST_CASE("Plates created with a bed template join that printer's row", "[PartPlateRows]")
+{
+    PlateFixture f(2);
+    REQUIRE(f.plates.set_plate_printer_bed(1, small_bed(0)));
+    f.plates.set_new_plate_bed(small_bed(0));
+    const int index = f.plates.create_plate(false);
+    REQUIRE(index == 2);
+    CHECK(f.plates.get_plate(2)->printer_bed().slot == 0);
+    CHECK(f.plates.get_plate(2)->get_size() == Vec2d(120., 120.));
+    CHECK_THAT(f.origin(2).x(), WithinAbs(120. * (1. + gap), 1e-6));
+    CHECK_THAT(f.origin(2).y(), WithinAbs(f.origin(1).y(), 1e-6));
+
+    // Without a template new plates use the project printer.
+    f.plates.set_new_plate_bed(PlatePrinterBed{});
+    REQUIRE(f.plates.create_plate(false) == 3);
+    CHECK_FALSE(f.plates.get_plate(3)->printer_bed().assigned());
+}

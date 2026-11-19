@@ -38,6 +38,7 @@ class ArrangeJob : public Job
     std::vector<ModelInstance*> m_unarranged;
     std::map<int, ArrangePolygons> m_selected_groups;   // groups of selected items for sequential printing
     std::vector<int> m_uncompatible_plates;  // plate indices with different printing sequence than global
+    std::vector<int> m_other_printer_plates;
 
     // IMEX zone snapshot, taken on the main thread in prepare().
     //

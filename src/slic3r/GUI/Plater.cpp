@@ -7289,6 +7289,7 @@ struct Plater::priv
     bool can_leave_printer_slot(int plate_index);
     bool can_switch_printer_slot(int slot);
     bool can_slice_all_printers();
+    int first_plate_of_printer(const std::string& printer);
     void activate_printer_slot();
     bool assign_plate_printer(int plate_index, const std::string& printer);
     //BBS: add a flag to ignore cancel event
@@ -13359,6 +13360,13 @@ void Plater::priv::on_select_preset(wxCommandEvent &evt)
             }
             std::string old_preset_name = wxGetApp().preset_bundle->printers.get_edited_preset().name;
 
+            // A printer that has plates: go to them.
+            if (const int plate = first_plate_of_printer(preset_name); plate >= 0) {
+                q->select_plate(plate);
+                sidebar->update_presets(Preset::TYPE_PRINTER);
+                return;
+            }
+
             update_objects_position_when_select_preset([this, &preset_type, &preset_name]() {
                 wxWindowUpdateLocker noUpdates2(sidebar->filament_panel());
                 wxGetApp().get_tab(preset_type)->select_preset(preset_name);
@@ -15456,6 +15464,23 @@ bool Plater::priv::can_switch_printer_slot(int slot)
     return wxGetApp().check_and_keep_current_preset_changes(_L("Switch printer"),
         _L("This plate uses another printer. Save or discard the changes to the current presets first."),
         ActionButtons::SAVE);
+}
+
+// First plate of another slot using this printer.
+int Plater::priv::first_plate_of_printer(const std::string& printer)
+{
+    if (!multi_printer_enabled() || !partplate_list.has_printer_beds())
+        return -1;
+    const std::string active = wxGetApp().preset_bundle->printers.get_selected_preset_name();
+    for (int i = 0; i < partplate_list.get_plate_count(); ++i) {
+        const int slot = partplate_list.get_plate(i)->printer_bed().slot;
+        if (slot == m_active_printer_slot)
+            continue;
+        const PrinterSlot* other = partplate_list.printer_slot(slot);
+        if (other != nullptr && other->printer == printer && printer != active)
+            return i;
+    }
+    return -1;
 }
 
 // Ask once before slicing plates of several printers.

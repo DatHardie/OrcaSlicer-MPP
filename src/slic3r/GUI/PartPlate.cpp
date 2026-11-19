@@ -6574,6 +6574,8 @@ int PartPlateList::create_plate(bool adjust_position)
 	}
 
 	plate->set_filament_count(m_filament_count);
+	if (m_new_plate_bed.assigned())
+		plate->m_printer_bed = m_new_plate_bed;
 
 	plate->set_index(new_index);
 	Vec2d pos = compute_shape_position(new_index, cols);

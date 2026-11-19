@@ -904,6 +904,7 @@ class PartPlateList : public ObjectBase
     void apply_printer_beds(bool move_instances);
     std::vector<PrinterSlot> m_printer_slots;
     PrinterSlot m_project_printer;
+    PlatePrinterBed m_new_plate_bed;
     int plate_bed_width(const PartPlate& plate) const;
     int plate_bed_depth(const PartPlate& plate) const;
     double plate_bed_height(const PartPlate& plate) const;
@@ -993,6 +994,8 @@ public:
     PrinterSlot* printer_slot(int slot);
     int find_or_add_printer_slot(const std::string& printer);
     void clear_printer_slots();
+    // Bed for plates created from now on.
+    void set_new_plate_bed(PlatePrinterBed bed) { m_new_plate_bed = std::move(bed); }
 
     //get the plate stride
     double plate_stride_x();

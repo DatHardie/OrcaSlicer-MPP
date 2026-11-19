@@ -3,6 +3,7 @@
 #include "libslic3r/BuildVolume.hpp"
 #include "libslic3r/SVG.hpp"
 #include "libslic3r/MTUtils.hpp"
+#include "libslic3r/Utils.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/ModelArrange.hpp"
 #include "libslic3r/IMEXArrange.hpp"
@@ -343,6 +344,19 @@ void ArrangeJob::prepare_all() {
     clear_input();
 
     PartPlateList& plate_list = m_plater->get_partplate_list();    
+    // Only the active printer's plates take part.
+    m_other_printer_plates.clear();
+    if (plate_list.has_printer_beds()) {
+        const PlatePrinterBed& bed = plate_list.get_curr_plate()->printer_bed();
+        for (int i = 0; i < plate_list.get_plate_count(); i++) {
+            PartPlate* plate = plate_list.get_plate(i);
+            if (!plate->is_locked() && plate->printer_bed().slot != bed.slot) {
+                plate->lock(true);
+                m_other_printer_plates.push_back(i);
+            }
+        }
+        plate_list.set_new_plate_bed(bed);
+    }
     for (size_t i = 0; i < plate_list.get_plate_count(); i++) {
         PartPlate* plate = plate_list.get_plate(i);
         bool same_as_global_print_seq = true;
@@ -647,9 +661,6 @@ void ArrangeJob::prepare()
     Model::setPrintSpeedTable(config, print_config);
 
     int state = m_plater->get_prepare_state();
-    // Plates of other printers have other beds.
-    if (state == Job::JobPrepareState::PREPARE_STATE_DEFAULT && m_plater->get_partplate_list().has_printer_beds())
-        state = Job::JobPrepareState::PREPARE_STATE_MENU;
     if (state == Job::JobPrepareState::PREPARE_STATE_DEFAULT) {
         only_on_partplate = false;
         prepare_all();
@@ -817,6 +828,15 @@ static std::string concat_strings(const std::set<std::string> &strings,
 }
 
 void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
+    // Undo the other printers' temporary locks on every exit.
+    ScopeGuard other_printers([this]() {
+        PartPlateList& plates = m_plater->get_partplate_list();
+        for (int i : m_other_printer_plates)
+            if (PartPlate* plate = plates.get_plate(i))
+                plate->lock(false);
+        m_other_printer_plates.clear();
+        plates.set_new_plate_bed(PlatePrinterBed{});
+    });
     try {
         if (eptr)
             std::rethrow_exception(eptr);
