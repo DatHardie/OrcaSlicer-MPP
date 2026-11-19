@@ -6641,6 +6641,9 @@ int PartPlateList::duplicate_plate(int index)
     PartPlate* new_plate = NULL;
     old_plate = get_plate(index);
     new_plate = get_plate(new_plate_index);
+    // The copy keeps the printer.
+    if (old_plate->m_printer_bed.assigned())
+        set_plate_printer_bed(new_plate_index, old_plate->m_printer_bed);
 
     // get the offset between plate centers
     Vec3d plate_to_plate_offset = new_plate->m_origin - old_plate->m_origin;

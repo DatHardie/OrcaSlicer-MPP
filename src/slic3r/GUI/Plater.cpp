@@ -24272,13 +24272,16 @@ int Plater::add_plate()
 {
     if (!p->can_add_plate())
         return -1;
-    // A new plate uses the project printer.
-    if (!p->can_switch_printer_slot(-1))
+    // A new plate uses the selected plate's printer.
+    const PlatePrinterBed bed = p->partplate_list.get_curr_plate()->printer_bed();
+    if (!p->can_switch_printer_slot(bed.slot))
         return -1;
     take_snapshot("add partplate");
     int new_plate = p->partplate_list.create_plate();
     if (new_plate < 0)
         return new_plate;
+    if (bed.assigned())
+        p->partplate_list.set_plate_printer_bed(new_plate, bed);
     p->partplate_list.select_plate(new_plate);
     p->activate_printer_slot();
     update();
