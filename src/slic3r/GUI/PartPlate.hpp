@@ -1020,6 +1020,8 @@ public:
     // First plate of a slot, -1 if none.
     int first_plate_of_slot(int slot) const;
     int plate_count_of_slot(int slot) const;
+    // Each printer keeps at least one plate.
+    bool can_delete_plate(int index) const;
     // Its plates go back to the project printer.
     bool clear_slot_printer_beds(int slot);
     static bool valid_printer_bed(const PlatePrinterBed& bed);

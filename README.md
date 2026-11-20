@@ -15,7 +15,7 @@ Works now:
 - A new plate takes the printer of the selected plate.
 - The project file stores the printer of each plate and unsaved preset changes.
 - With a print host such as Moonraker, **Print** sends the selected plate to its printer, and **Print all** sends each sliced plate to its own printer.
-- **Project Printers** in the Prepare sidebar lists each printer with its plates and how many are sliced. Adding a printer there creates a plate for it, clicking a printer shows its plates, and removing a printer moves its plates back to the project printer. Unsaved preset changes of a printer that leaves the project are asked about.
+- **Project Printers** in the Prepare sidebar lists each printer with its plates and how many are sliced. Adding a printer there creates a plate for it, clicking a printer shows its plates, and removing a printer moves its plates back to the project printer. Each printer keeps at least one plate until it is removed there. Unsaved preset changes of a printer that leaves the project are asked about.
 
 ## Use
 

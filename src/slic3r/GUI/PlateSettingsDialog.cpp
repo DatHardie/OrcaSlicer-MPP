@@ -694,6 +694,16 @@ void PlateSettingsDialog::sync_printer_choices(const std::vector<wxString>& prin
     m_printer_choice->SetSelection(std::clamp(selection, 0, int(printers.size())));
 }
 
+void PlateSettingsDialog::enable_printer_choice(bool enable, bool project_printer)
+{
+    m_printer_choice->Enable(enable);
+    const wxString tip = enable          ? wxString() :
+                         project_printer ? _L("This is the project printer's last plate.") :
+                                           _L("This is the printer's last plate. Remove the printer under Project Printers instead.");
+    m_printer_choice->SetToolTip(tip);
+    m_printer_txt->SetToolTip(tip);
+}
+
 int PlateSettingsDialog::get_printer_choice() const
 {
     return m_printer_choice->IsShown() ? m_printer_choice->GetSelection() : wxNOT_FOUND;

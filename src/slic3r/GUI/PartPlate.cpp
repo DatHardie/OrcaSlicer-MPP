@@ -6723,6 +6723,11 @@ int PartPlateList::delete_plate(int index)
 		BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(":only one plate left, can not delete");
 		return -1;
 	}
+	if (!can_delete_plate(index))
+	{
+		BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(":last plate of its printer, can not delete");
+		return -1;
+	}
 
 	plate = m_plate_list[index];
 	if (index != plate->get_index())
@@ -7180,6 +7185,12 @@ int PartPlateList::plate_count_of_slot(int slot) const
 {
 	return int(std::count_if(m_plate_list.begin(), m_plate_list.end(),
 		[slot](const PartPlate* plate) { return plate->m_printer_bed.slot == slot; }));
+}
+
+bool PartPlateList::can_delete_plate(int index) const
+{
+	return index >= 0 && index < int(m_plate_list.size()) && m_plate_list.size() > 1 &&
+	       plate_count_of_slot(m_plate_list[index]->m_printer_bed.slot) > 1;
 }
 
 bool PartPlateList::clear_slot_printer_beds(int slot)

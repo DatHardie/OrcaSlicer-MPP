@@ -133,6 +133,8 @@ public:
     BedType get_bed_type_choice();
     // Fills the printer row; 0 is project printer.
     void sync_printer_choices(const std::vector<wxString>& printers, int selection);
+    // Off for the last plate of a printer.
+    void enable_printer_choice(bool enable, bool project_printer);
     int get_printer_choice() const;
 
     wxString get_plate_name() const;

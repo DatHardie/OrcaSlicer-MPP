@@ -145,16 +145,45 @@ TEST_CASE("A new plate joins the project printer row", "[PartPlateRows]")
     CHECK_THAT(f.origin(2).y(), WithinAbs(0., 1e-6));
 }
 
-TEST_CASE("Deleting a printer row's only plate closes the row", "[PartPlateRows]")
+TEST_CASE("Removing a printer closes its row", "[PartPlateRows]")
 {
     PlateFixture f(3);
     REQUIRE(f.plates.set_plate_printer_bed(1, small_bed(0)));
     REQUIRE(f.plates.set_plate_printer_bed(2, small_bed(1)));
-    REQUIRE(f.plates.delete_plate(1) == 0);
+    REQUIRE(f.plates.clear_slot_printer_beds(0));
+    REQUIRE(f.plates.get_plate_count() == 3);
+    // Plate 2's printer now has the second row.
+    CHECK_THAT(f.origin(2).x(), WithinAbs(0., 1e-6));
+    CHECK_THAT(f.origin(2).y(), WithinAbs(-(120. + gap * project_size), 1e-6));
+}
+
+TEST_CASE("A printer's last plate cannot be deleted", "[PartPlateRows]")
+{
+    PlateFixture f(3);
+    REQUIRE(f.plates.set_plate_printer_bed(1, small_bed(0)));
+    CHECK_FALSE(f.plates.can_delete_plate(1));
+    CHECK(f.plates.delete_plate(1) == -1);
+    REQUIRE(f.plates.get_plate_count() == 3);
+    CHECK(f.plates.get_plate(1)->printer_bed().slot == 0);
+
+    // The project printer has two plates.
+    CHECK(f.plates.can_delete_plate(2));
+    CHECK(f.plates.delete_plate(2) == 0);
     REQUIRE(f.plates.get_plate_count() == 2);
-    // Former plate 2 now starts the second row.
-    CHECK_THAT(f.origin(1).x(), WithinAbs(0., 1e-6));
-    CHECK_THAT(f.origin(1).y(), WithinAbs(-(120. + gap * project_size), 1e-6));
+    CHECK_FALSE(f.plates.can_delete_plate(0));
+    CHECK(f.plates.delete_plate(0) == -1);
+
+    const int invalid = GENERATE(-1, 2, 9);
+    CHECK_FALSE(f.plates.can_delete_plate(invalid));
+}
+
+TEST_CASE("Without own printers only the single plate is kept", "[PartPlateRows]")
+{
+    PlateFixture one(1);
+    CHECK_FALSE(one.plates.can_delete_plate(0));
+    PlateFixture two(2);
+    CHECK(two.plates.can_delete_plate(0));
+    CHECK(two.plates.can_delete_plate(1));
 }
 
 TEST_CASE("Invalid own beds are rejected and change nothing", "[PartPlateRows]")

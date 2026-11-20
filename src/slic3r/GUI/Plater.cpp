@@ -7452,7 +7452,8 @@ struct Plater::priv
     // False if the user cancels.
     bool resolve_leaving_printer_changes();
     bool settle_printer_changes(int slot);
-    bool resolve_orphaned_printer_changes(const std::vector<int>& slots);
+    bool resolve_orphaned_printer_changes(const std::vector<int>& slots, bool can_cancel);
+    void discard_preset_changes();
     void activate_printer_slot();
     void switch_printer_slot(int slot);
     bool assign_plate_printer(int plate_index, const std::string& printer);
@@ -15716,18 +15717,23 @@ bool Plater::priv::resolve_leaving_printer_changes()
     if (!wxGetApp().check_and_save_current_preset_changes(_L("Remove printer"), _L("Some presets are modified."), false))
         return false;
     // Discard leaves the edits in the presets.
-    PresetBundle& bundle = *wxGetApp().preset_bundle;
-    if (bundle.printers.current_is_dirty() || bundle.prints.current_is_dirty() || bundle.filaments.current_is_dirty()) {
-        bundle.printers.discard_current_changes();
-        bundle.prints.discard_current_changes();
-        bundle.filaments.discard_current_changes();
-        wxGetApp().load_current_presets(false);
-    }
+    discard_preset_changes();
     return true;
 }
 
+void Plater::priv::discard_preset_changes()
+{
+    PresetBundle& bundle = *wxGetApp().preset_bundle;
+    if (!bundle.printers.current_is_dirty() && !bundle.prints.current_is_dirty() && !bundle.filaments.current_is_dirty())
+        return;
+    bundle.printers.discard_current_changes();
+    bundle.prints.discard_current_changes();
+    bundle.filaments.discard_current_changes();
+    wxGetApp().load_current_presets(false);
+}
+
 // Offers changes of plate-less printers; false on cancel.
-bool Plater::priv::resolve_orphaned_printer_changes(const std::vector<int>& slots)
+bool Plater::priv::resolve_orphaned_printer_changes(const std::vector<int>& slots, bool can_cancel)
 {
     if (!multi_printer_enabled() || m_activating_printer_slot)
         return true;
@@ -15743,8 +15749,13 @@ bool Plater::priv::resolve_orphaned_printer_changes(const std::vector<int>& slot
             partplate_list.first_plate_of_slot(slot) >= 0 || fff_printer_preset(orphan->printer) == nullptr)
             continue;
         switch_printer_slot(slot);
-        if (m_active_printer_slot == slot)
-            ok = resolve_leaving_printer_changes();
+        if (m_active_printer_slot != slot || resolve_leaving_printer_changes())
+            continue;
+        // Undo cannot be cancelled: closing discards.
+        if (can_cancel)
+            ok = false;
+        else
+            discard_preset_changes();
     }
     // Back to the current plate's printer.
     const int current = partplate_list.get_curr_plate()->printer_bed().slot;
@@ -16162,7 +16173,7 @@ bool Plater::check_printer_slot_changes(const wxString& caption, const wxString&
     }
     if (!changed.empty())
         select_plate(original);
-    return ok && p->resolve_orphaned_printer_changes(changed);
+    return ok && p->resolve_orphaned_printer_changes(changed, true);
 }
 
 void Plater::invalidate_plates_for_presets(Preset::Type type)
@@ -16622,7 +16633,7 @@ void Plater::priv::undo_redo_to(std::vector<UndoRedo::Snapshot>::const_iterator 
             partplate_list.refresh_printer_rows();
             wxGetApp().CallAfter([this, printers_with_plates]() {
                 activate_printer_slot();
-                resolve_orphaned_printer_changes(printers_with_plates);
+                resolve_orphaned_printer_changes(printers_with_plates, false);
             });
         }
         if (printer_technology_changed) {
@@ -24542,6 +24553,8 @@ void Plater::open_platesettings_dialog(wxCommandEvent& evt) {
                 selection = int(printer_names.size());
         }
         dlg.sync_printer_choices(labels, selection);
+        dlg.enable_printer_choice(p->partplate_list.plate_count_of_slot(curr_plate->printer_bed().slot) > 1,
+                                  curr_plate->printer_bed().slot < 0);
     }
 
     dlg.Bind(EVT_SET_BED_TYPE_CONFIRM, [this, plate_index, &dlg](wxCommandEvent& e) {
@@ -24601,10 +24614,8 @@ void Plater::open_platesettings_dialog(wxCommandEvent& evt) {
         return;
     const std::string printer = printer_choice == 0 ? std::string() : printer_names.at(printer_choice - 1);
     const int plate = p->partplate_list.get_curr_plate_index();
-    // Its printer's last plate: ask before leaving.
-    const int old_slot = p->partplate_list.get_curr_plate()->printer_bed().slot;
-    if (old_slot >= 0 && p->partplate_list.plate_count_of_slot(old_slot) == 1 &&
-        printer != wxGetApp().preset_bundle->printers.get_selected_preset_name() && !p->settle_printer_changes(old_slot))
+    // The printer's last plate keeps it.
+    if (p->partplate_list.plate_count_of_slot(p->partplate_list.get_curr_plate()->printer_bed().slot) <= 1)
         return;
     take_snapshot("change plate printer");
     if (!p->assign_plate_printer(plate, printer)) {
@@ -24999,12 +25010,15 @@ int Plater::delete_plate(int plate_index)
     if (plate_index == -1)
         index = p->partplate_list.get_curr_plate_index();
 
-    // Its printer's last plate: ask before deleting.
-    if (const PartPlate* plate = p->partplate_list.get_plate(index);
-        plate != nullptr && p->multi_printer_enabled() && p->partplate_list.get_plate_count() > 1) {
-        const int slot = plate->printer_bed().slot;
-        if (slot >= 0 && p->partplate_list.plate_count_of_slot(slot) == 1 && !p->settle_printer_changes(slot))
-            return -1;
+    // Each printer keeps at least one plate.
+    if (p->partplate_list.get_plate_count() > 1 && !p->partplate_list.can_delete_plate(index)) {
+        const PartPlate* plate   = p->partplate_list.get_plate(index);
+        const bool       project = plate != nullptr && plate->printer_bed().slot < 0;
+        p->notification_manager->push_notification(NotificationType::CustomNotification,
+                                                   NotificationManager::NotificationLevel::WarningNotificationLevel,
+                                                   project ? _u8L("The project printer keeps at least one plate.") :
+                                                             _u8L("The last plate of a printer cannot be deleted. Remove the printer under Project Printers instead."));
+        return -1;
     }
     take_snapshot("delete partplate");
     ret = p->partplate_list.delete_plate(index);
@@ -25333,6 +25347,10 @@ bool Plater::can_delete_all() const { return p->can_delete_all(); }
 bool Plater::can_add_model() const { return !is_background_process_slicing(); }
 bool Plater::can_add_plate() const { return !is_background_process_slicing() && p->can_add_plate(); }
 bool Plater::can_delete_plate() const { return p->can_delete_plate(); }
+bool Plater::can_delete_curr_plate() const
+{
+    return p->partplate_list.can_delete_plate(p->partplate_list.get_curr_plate_index());
+}
 
 void Plater::rename_plate(int plate_index, const std::string& name)
 {

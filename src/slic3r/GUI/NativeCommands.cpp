@@ -464,6 +464,8 @@ std::vector<NativeCommand> build_command_catalog()
             return plate_unavailable();
         if (!plater->can_delete_plate())
             return AppActionRunResult{AppActionRunResult::Level::Info, _L("Cannot delete the only plate.")};
+        if (!plater->can_delete_curr_plate())
+            return AppActionRunResult{AppActionRunResult::Level::Info, _L("The last plate of a printer cannot be deleted.")};
         plater->delete_plate();
         return AppActionRunResult{AppActionRunResult::Level::Success};
     });
