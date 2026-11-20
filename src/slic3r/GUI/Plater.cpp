@@ -15749,13 +15749,12 @@ bool Plater::priv::resolve_orphaned_printer_changes(const std::vector<int>& slot
             partplate_list.first_plate_of_slot(slot) >= 0 || fff_printer_preset(orphan->printer) == nullptr)
             continue;
         switch_printer_slot(slot);
-        if (m_active_printer_slot != slot || resolve_leaving_printer_changes())
+        if (m_active_printer_slot != slot)
             continue;
-        // Undo cannot be cancelled: closing discards.
-        if (can_cancel)
-            ok = false;
-        else
-            discard_preset_changes();
+        ok = resolve_leaving_printer_changes();
+        // Undo cannot be cancelled; ask until decided.
+        while (!ok && !can_cancel)
+            ok = resolve_leaving_printer_changes();
     }
     // Back to the current plate's printer.
     const int current = partplate_list.get_curr_plate()->printer_bed().slot;
