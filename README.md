@@ -15,15 +15,12 @@ Works now:
 - A new plate takes the printer of the selected plate.
 - The project file stores the printer of each plate and unsaved preset changes.
 - With a print host such as Moonraker, **Print** sends the selected plate to its printer, and **Print all** sends each sliced plate to its own printer.
-
-Planned:
-
-- A project view lists the printers of the project, and printers can be added there.
+- **Project Printers** in the Prepare sidebar lists each printer with bed size, plates, print host and sliced plates. Adding a printer there creates a plate for it, clicking a printer shows its plates, and removing a printer moves its plates back to the project printer.
 
 ## Use
 
 1. Turn on **Preferences → Behaviour → Multi-printer projects (experimental)** and restart OrcaSlicer. The option is off by default.
-2. Open the plate settings and choose a **Printer**. **Project printer** is the normal printer of the project.
+2. Add a printer under **Project Printers**, or choose a **Printer** in the plate settings. **Project printer** is the normal printer of the project.
 
 The plates of each printer form one row. Without plates for other printers, OrcaSlicer works as before.
 
