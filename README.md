@@ -13,7 +13,7 @@ Works now:
 - Selecting a plate switches to its printer, process and filament presets.
 - Each plate is sliced with its own printer.
 - A new plate takes the printer of the selected plate.
-- The project file stores the printer of each plate and unsaved preset changes.
+- The project file stores the printer of each plate and unsaved preset changes ([format](docs/HLSD/multi-printer-3mf.md)).
 - With a print host such as Moonraker, **Print** sends the selected plate to its printer, and **Print all** sends each sliced plate to its own printer.
 - **Project Printers** in the Prepare sidebar lists the printers with their plates. Adding a printer creates a plate for it, clicking a printer selects its plates, and removing a printer moves its plates to the project printer.
 
