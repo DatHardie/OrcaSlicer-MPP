@@ -7296,6 +7296,7 @@ struct Plater::priv
     void activate_printer_slot();
     bool assign_plate_printer(int plate_index, const std::string& printer);
     void store_printer_slots(PlateDataPtrs& plate_data, Model& target);
+    bool plate_printer_ids(int plate, std::string& model_id, std::string& nozzles);
     void restore_printer_slots(const PlateDataPtrs& plate_data, const std::string& json, const DynamicPrintConfig& project_config);
     //BBS: add a flag to ignore cancel event
     bool m_ignore_event{false};
@@ -15653,6 +15654,26 @@ void Plater::priv::store_printer_slots(PlateDataPtrs& plate_data, Model& target)
     target.printer_slots = printer_slots_to_json(data);
 }
 
+// Model id and nozzles of inactive plate printers.
+bool Plater::priv::plate_printer_ids(int plate, std::string& model_id, std::string& nozzles)
+{
+    if (!multi_printer_enabled() || plate < 0 || plate >= partplate_list.get_plate_count())
+        return false;
+    const int          slot   = partplate_list.get_plate(plate)->printer_bed().slot;
+    const PrinterSlot* source = partplate_list.printer_slot(slot);
+    if (slot == m_active_printer_slot || source == nullptr)
+        return false;
+    PresetBundle&                           bundle = *wxGetApp().preset_bundle;
+    Preset*                                 preset = bundle.printers.find_preset(source->printer, false);
+    const std::optional<DynamicPrintConfig> config = slot_printer_config(*source);
+    if (preset == nullptr || !config)
+        return false;
+    model_id = preset->get_current_printer_type(&bundle);
+    if (const auto* opt = config->option<ConfigOptionFloats>("nozzle_diameter"))
+        nozzles = opt->serialize();
+    return true;
+}
+
 // Rebuilds slots and beds before objects load.
 void Plater::priv::restore_printer_slots(const PlateDataPtrs& plate_data, const std::string& json, const DynamicPrintConfig& project_config)
 {
@@ -21551,6 +21572,8 @@ int Plater::export_3mf(const boost::filesystem::path& output_path, SaveStrategy 
         PlateData *plate_data = plate_data_list[i];
         plate_data->printer_model_id = printer_model_id;
         plate_data->nozzle_diameters = nozzle_diameter_str;
+        // Plates of other printers carry their ids.
+        p->plate_printer_ids(i, plate_data->printer_model_id, plate_data->nozzle_diameters);
         for (auto it = plate_data->slice_filaments_info.begin(); it != plate_data->slice_filaments_info.end(); it++) {
             std::string display_filament_type;
             it->type  = cfg.get_filament_type(display_filament_type, it->id);
