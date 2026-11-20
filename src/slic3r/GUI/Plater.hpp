@@ -374,8 +374,6 @@ public:
     {
         int         slot{-1};
         std::string printer;
-        std::string host;
-        Vec2d       bed_size{Vec2d::Zero()};
         int         plates{0};
         int         sliced{0};
         bool        active{false};

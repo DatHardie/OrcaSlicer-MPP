@@ -5598,14 +5598,9 @@ void Sidebar::update_project_printers(bool force)
         const wxString label = wxControl::EscapeMnemonics(from_u8(preset != nullptr ? preset->label(false) : printer.printer));
         // TRN %1% is a printer name.
         const wxString name  = printer.slot < 0 ? format_wxstr(_L("%1% (project printer)"), label) : label;
-        const double   width = std::round(printer.bed_size.x() * 10.) / 10.;
-        const double   depth = std::round(printer.bed_size.y() * 10.) / 10.;
-        // TRN Bed width x depth, then plate count.
-        const wxString plates = format_wxstr(_L_PLURAL("%1% x %2% mm, %3% plate", "%1% x %2% mm, %3% plates", printer.plates),
-                                             width, depth, printer.plates);
-        const wxString host   = printer.host.empty() ?
-                                    _L("No print host") :
-                                    format_wxstr(_L("Print host: %1%"), wxControl::EscapeMnemonics(from_u8(printer.host)));
+        // TRN Plates of this printer, then sliced ones.
+        const wxString state = format_wxstr(_L_PLURAL("%1% plate, %2% sliced", "%1% plates, %2% sliced", printer.plates),
+                                            printer.plates, printer.sliced);
 
         wxPanel* row = new wxPanel(content, wxID_ANY);
         row->SetBackgroundColour(wxColour(255, 255, 255));
@@ -5615,26 +5610,18 @@ void Sidebar::update_project_printers(bool force)
             line->SetToolTip(row->GetToolTipText());
             return line;
         };
-        wxBoxSizer* lines = new wxBoxSizer(wxVERTICAL);
-        lines->Add(add_label(name, printer.active ? Label::Head_13 : Label::Body_13), 0, wxEXPAND);
-        lines->Add(add_label(plates, Label::Body_12), 0, wxEXPAND | wxTOP, FromDIP(2));
-        lines->Add(add_label(host, Label::Body_12), 0, wxEXPAND | wxTOP, FromDIP(2));
-
         wxBoxSizer* row_sizer = new wxBoxSizer(wxHORIZONTAL);
-        row_sizer->Add(lines, 1, wxALIGN_CENTER_VERTICAL);
-        if (printer.plates > 0)
-            // TRN Sliced plates of all plates.
-            row_sizer->Add(add_label(format_wxstr(_L("%1%/%2% sliced"), printer.sliced, printer.plates), Label::Body_12), 0,
-                           wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(SidebarProps::ElementSpacing()));
-        if (printer.slot >= 0) {
-            ScalableButton* remove = new ScalableButton(row, wxID_ANY, "delete");
-            remove->SetToolTip(_L("Remove printer"));
-            // The handler destroys this button.
-            remove->Bind(wxEVT_BUTTON, [slot = printer.slot](wxCommandEvent&) {
-                wxGetApp().CallAfter([slot]() { wxGetApp().plater()->remove_printer(slot); });
-            });
-            row_sizer->Add(remove, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(SidebarProps::WideSpacing()));
-        }
+        row_sizer->Add(add_label(name, printer.active ? Label::Head_13 : Label::Body_13), 1, wxALIGN_CENTER_VERTICAL);
+        row_sizer->Add(add_label(state, Label::Body_12), 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(SidebarProps::ElementSpacing()));
+        // The project printer keeps the space aligned.
+        ScalableButton* remove = new ScalableButton(row, wxID_ANY, "delete");
+        remove->SetToolTip(_L("Remove printer"));
+        // The handler destroys this button.
+        remove->Bind(wxEVT_BUTTON, [slot = printer.slot](wxCommandEvent&) {
+            wxGetApp().CallAfter([slot]() { wxGetApp().plater()->remove_printer(slot); });
+        });
+        row_sizer->Add(remove, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRESERVE_SPACE_EVEN_IF_HIDDEN, FromDIP(SidebarProps::WideSpacing()));
+        remove->Show(printer.slot >= 0);
         row->SetSizer(row_sizer);
         if (printer.plates > 0) {
             row->SetCursor(wxCURSOR_HAND);
@@ -5643,7 +5630,8 @@ void Sidebar::update_project_printers(bool force)
             });
         }
         wxGetApp().UpdateDarkUIWin(row);
-        sizer->Add(row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(SidebarProps::ContentMargin()));
+        sizer->AddSpacer(FromDIP(SidebarProps::ElementSpacing()));
+        sizer->Add(row, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(SidebarProps::ContentMargin()));
     }
     sizer->AddSpacer(FromDIP(SidebarProps::ContentMarginV()));
     content->Layout();
@@ -15907,8 +15895,7 @@ bool Plater::priv::assign_plate_printer(int plate_index, const std::string& prin
 
 bool Plater::ProjectPrinter::operator==(const ProjectPrinter& other) const
 {
-    return slot == other.slot && printer == other.printer && host == other.host && bed_size == other.bed_size &&
-           plates == other.plates && sliced == other.sliced && active == other.active;
+    return slot == other.slot && printer == other.printer && plates == other.plates && sliced == other.sliced && active == other.active;
 }
 
 std::vector<Plater::ProjectPrinter> Plater::project_printers() const
@@ -15926,20 +15913,10 @@ std::vector<Plater::ProjectPrinter> Plater::project_printers() const
         for (int i = 0; i < plates.get_plate_count(); ++i)
             if (PartPlate* plate = plates.get_plate(i); plate->printer_bed().slot == slot && plate->is_slice_result_valid())
                 ++printer.sliced;
-        std::optional<DynamicPrintConfig> config;
-        if (printer.active) {
+        if (printer.active)
             printer.printer = bundle.printers.get_selected_preset_name();
-            config          = bundle.printers.get_edited_preset().config;
-        } else if (const PrinterSlot* source = plates.printer_slot(slot)) {
+        else if (const PrinterSlot* source = plates.printer_slot(slot))
             printer.printer = source->printer;
-            config          = slot_printer_config(*source);
-        }
-        if (config) {
-            if (const auto* host = config->option<ConfigOptionString>("print_host"))
-                printer.host = host->value;
-            if (const std::optional<PlatePrinterBed> bed = printer_bed_from(*config))
-                printer.bed_size = BoundingBoxf(bed->shape).size();
-        }
         printers.push_back(std::move(printer));
     };
     add(-1);
