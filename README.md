@@ -14,10 +14,10 @@ Works now:
 - Each plate is sliced with its own printer.
 - A new plate takes the printer of the selected plate.
 - The project file stores the printer of each plate and unsaved preset changes.
+- With a print host such as Moonraker, **Print** sends the selected plate to its printer, and **Print all** sends each sliced plate to its own printer.
 
 Planned:
 
-- Printing sends each plate to its printer.
 - A project view lists the printers of the project, and printers can be added there.
 
 ## Use
@@ -31,7 +31,7 @@ The plates of each printer form one row. Without plates for other printers, Orca
 
 - Presets of other printers are stored by name. They must exist where the project is opened.
 - Official OrcaSlicer, or this fork with the option off, opens such a project with all plates on one printer.
-- Printing and sending are untested with plates of different printers.
+- Printing was tested with simulated Moonraker hosts, not with real printers. Bambu Lab network printing is not adapted.
 - Tested on Linux only.
 
 ## Build
