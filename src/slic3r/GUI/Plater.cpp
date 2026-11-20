@@ -7451,6 +7451,8 @@ struct Plater::priv
     // Printer slot whose presets are active.
     int m_active_printer_slot{-1};
     bool m_switching_printer_slot{false};
+    // Dialogs here run nested events.
+    bool m_activating_printer_slot{false};
     // Slot changes come from the opened project.
     bool m_loading_printer_slots{false};
     void invalidate_plates_for_presets(Preset::Type type);
@@ -7459,7 +7461,12 @@ struct Plater::priv
     int first_plate_of_printer(const std::string& printer);
     void stash_preset_changes(PrinterSlot& slot);
     void restore_preset_changes(PrinterSlot& slot);
+    // False if the user cancels.
+    bool resolve_leaving_printer_changes();
+    bool settle_printer_changes(int slot);
+    bool resolve_orphaned_printer_changes(const std::vector<int>& slots);
     void activate_printer_slot();
+    void switch_printer_slot(int slot);
     bool assign_plate_printer(int plate_index, const std::string& printer);
     void store_printer_slots(PlateDataPtrs& plate_data, Model& target);
     bool plate_printer_ids(int plate, std::string& model_id, std::string& nozzles);
@@ -15702,15 +15709,90 @@ void Plater::priv::restore_preset_changes(PrinterSlot& slot)
     restore(Preset::TYPE_FILAMENT, bundle.filaments, slot.filament_changes, slot.changed_filament);
 }
 
+// Save or discard changes of a leaving printer.
+bool Plater::priv::resolve_leaving_printer_changes()
+{
+    if (!wxGetApp().has_current_preset_changes())
+        return true;
+    const bool activating     = m_activating_printer_slot;
+    m_activating_printer_slot = true;
+    ScopeGuard restore_activating([this, activating]() { m_activating_printer_slot = activating; });
+    // A remembered choice would save nothing.
+    if (!wxGetApp().check_and_save_current_preset_changes(_L("Remove printer"), _L("Some presets are modified."), false))
+        return false;
+    // Discard leaves the edits in the presets.
+    PresetBundle& bundle = *wxGetApp().preset_bundle;
+    if (bundle.printers.current_is_dirty() || bundle.prints.current_is_dirty() || bundle.filaments.current_is_dirty()) {
+        bundle.printers.discard_current_changes();
+        bundle.prints.discard_current_changes();
+        bundle.filaments.discard_current_changes();
+        wxGetApp().load_current_presets(false);
+    }
+    return true;
+}
+
+// Offers changes of plate-less printers; false on cancel.
+bool Plater::priv::resolve_orphaned_printer_changes(const std::vector<int>& slots)
+{
+    if (!multi_printer_enabled() || m_activating_printer_slot)
+        return true;
+    m_activating_printer_slot = true;
+    ScopeGuard activating([this]() { m_activating_printer_slot = false; });
+    bool ok = true;
+    for (const int slot : slots) {
+        const PrinterSlot* orphan = partplate_list.printer_slot(slot);
+        if (!ok || slot < 0 || slot == m_active_printer_slot || orphan == nullptr || !orphan->has_changes() ||
+            partplate_list.first_plate_of_slot(slot) >= 0)
+            continue;
+        switch_printer_slot(slot);
+        if (m_active_printer_slot == slot)
+            ok = resolve_leaving_printer_changes();
+    }
+    // Back to the current plate's printer.
+    const int current = partplate_list.get_curr_plate()->printer_bed().slot;
+    if (m_active_printer_slot != current)
+        switch_printer_slot(current);
+    return ok;
+}
+
+// Before a printer leaves; false if cancelled.
+bool Plater::priv::settle_printer_changes(int slot)
+{
+    const PrinterSlot* printer   = partplate_list.printer_slot(slot);
+    const int          original  = partplate_list.get_curr_plate_index();
+    const bool         was_dirty = q->is_project_dirty();
+    if (slot != m_active_printer_slot && printer != nullptr && printer->has_changes())
+        q->select_plate(partplate_list.first_plate_of_slot(slot));
+    const bool keep = slot != m_active_printer_slot || resolve_leaving_printer_changes();
+    if (partplate_list.get_curr_plate_index() != original) {
+        q->select_plate(original);
+        if (q->is_preview_shown())
+            q->reload_print();
+    }
+    // Cancelling leaves a saved project unmodified.
+    if (!keep && !was_dirty) {
+        q->update_project_dirty_from_presets();
+        q->set_plater_dirty(false);
+    }
+    return keep;
+}
+
 void Plater::priv::activate_printer_slot()
 {
-    if (!multi_printer_enabled())
+    if (!multi_printer_enabled() || m_activating_printer_slot)
         return;
     const int slot = partplate_list.get_curr_plate()->printer_bed().slot;
     if (slot == m_active_printer_slot)
         return;
-    ScopeGuard refresh_list([this]() { sidebar->update_project_printers(); });
+    m_activating_printer_slot = true;
+    ScopeGuard activating([this]() { m_activating_printer_slot = false; });
+    switch_printer_slot(slot);
+}
 
+// Stashes the active slot, loads another.
+void Plater::priv::switch_printer_slot(int slot)
+{
+    ScopeGuard refresh_list([this]() { sidebar->update_project_printers(); });
     PresetBundle& bundle = *wxGetApp().preset_bundle;
     if (PrinterSlot* leaving = partplate_list.printer_slot(m_active_printer_slot)) {
         leaving->printer   = bundle.printers.get_selected_preset_name();
@@ -15888,27 +15970,8 @@ bool Plater::remove_printer(int slot)
         return false;
     }
     // Its unsaved preset changes are offered first.
-    const PrinterSlot* removed   = plates.printer_slot(slot);
-    const int          original  = plates.get_curr_plate_index();
-    const bool         was_dirty = is_project_dirty();
-    if (slot != p->m_active_printer_slot && removed != nullptr && removed->has_changes())
-        select_plate(plates.first_plate_of_slot(slot));
-    if (slot == p->m_active_printer_slot) {
-        const bool keep = wxGetApp().check_and_save_current_preset_changes(_L("Remove printer"), _L("Some presets are modified."));
-        if (plates.get_curr_plate_index() != original) {
-            select_plate(original);
-            if (is_preview_shown())
-                reload_print();
-        }
-        if (!keep) {
-            // Cancelling leaves a saved project unmodified.
-            if (!was_dirty) {
-                update_project_dirty_from_presets();
-                set_plater_dirty(false);
-            }
-            return false;
-        }
-    }
+    if (!p->settle_printer_changes(slot))
+        return false;
     take_snapshot("remove printer");
     plates.clear_slot_printer_beds(slot);
     p->activate_printer_slot();
@@ -16108,7 +16171,7 @@ bool Plater::check_printer_slot_changes(const wxString& caption, const wxString&
     }
     if (!changed.empty())
         select_plate(original);
-    return ok;
+    return ok && p->resolve_orphaned_printer_changes(changed);
 }
 
 void Plater::invalidate_plates_for_presets(Preset::Type type)
@@ -16555,13 +16618,21 @@ void Plater::priv::undo_redo_to(std::vector<UndoRedo::Snapshot>::const_iterator 
 
     // Make a copy of the snapshot, undo/redo could invalidate the iterator
     const UndoRedo::Snapshot snapshot_copy = *it_snapshot;
+    // Printers that lose their plates are asked.
+    std::vector<int> printers_with_plates;
+    for (int slot = 0; slot < int(partplate_list.printer_slots().size()); ++slot)
+        if (partplate_list.first_plate_of_slot(slot) >= 0)
+            printers_with_plates.push_back(slot);
     // Do the jump in time.
     if (it_snapshot->timestamp < this->undo_redo_stack().active_snapshot_time() ?
         this->undo_redo_stack().undo(model, get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_selection() : this->view3D->get_canvas3d()->get_selection(), get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_gizmos_manager() : this->view3D->get_canvas3d()->get_gizmos_manager(), this->partplate_list, top_snapshot_data, it_snapshot->timestamp) :
         this->undo_redo_stack().redo(model, get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_gizmos_manager() : this->view3D->get_canvas3d()->get_gizmos_manager(), this->partplate_list, it_snapshot->timestamp)) {
         if (partplate_list.has_printer_beds() || m_active_printer_slot >= 0) {
             partplate_list.refresh_printer_rows();
-            wxGetApp().CallAfter([this]() { activate_printer_slot(); });
+            wxGetApp().CallAfter([this, printers_with_plates]() {
+                activate_printer_slot();
+                resolve_orphaned_printer_changes(printers_with_plates);
+            });
         }
         if (printer_technology_changed) {
             // Switch to the other printer technology. Switch to the last printer active for that particular technology.
@@ -24539,6 +24610,11 @@ void Plater::open_platesettings_dialog(wxCommandEvent& evt) {
         return;
     const std::string printer = printer_choice == 0 ? std::string() : printer_names.at(printer_choice - 1);
     const int plate = p->partplate_list.get_curr_plate_index();
+    // Its printer's last plate: ask before leaving.
+    const int old_slot = p->partplate_list.get_curr_plate()->printer_bed().slot;
+    if (old_slot >= 0 && p->partplate_list.plate_count_of_slot(old_slot) == 1 &&
+        printer != wxGetApp().preset_bundle->printers.get_selected_preset_name() && !p->settle_printer_changes(old_slot))
+        return;
     take_snapshot("change plate printer");
     if (!p->assign_plate_printer(plate, printer)) {
         show_error(this, _L("The selected printer cannot be used for this plate."));
@@ -24932,13 +25008,21 @@ int Plater::delete_plate(int plate_index)
     if (plate_index == -1)
         index = p->partplate_list.get_curr_plate_index();
 
+    // Its printer's last plate: ask before deleting.
+    if (const PartPlate* plate = p->partplate_list.get_plate(index);
+        plate != nullptr && p->multi_printer_enabled() && p->partplate_list.get_plate_count() > 1) {
+        const int slot = plate->printer_bed().slot;
+        if (slot >= 0 && p->partplate_list.plate_count_of_slot(slot) == 1 && !p->settle_printer_changes(slot))
+            return -1;
+    }
     take_snapshot("delete partplate");
     ret = p->partplate_list.delete_plate(index);
-    p->activate_printer_slot();
 
     //BBS: update the current print to the current plate
     p->partplate_list.update_slice_context_to_current_plate(p->background_process);
     p->preview->update_gcode_result(p->partplate_list.get_current_slice_result());
+    // The deleted plate's print is gone now.
+    p->activate_printer_slot();
     p->sidebar->obj_list()->reload_all_plates();
 
     // BBS update default view
