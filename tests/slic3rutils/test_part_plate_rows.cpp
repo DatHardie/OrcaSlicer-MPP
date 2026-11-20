@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -401,6 +402,66 @@ TEST_CASE("Unknown keys in saved preset changes are dropped", "[PartPlateRows]")
     REQUIRE(data.slots.size() == 1);
     CHECK_THAT(data.slots[0].print_changes.opt_float("layer_height"), WithinAbs(0.3, 1e-9));
     CHECK_FALSE(data.slots[0].print_changes.has("no_such_option"));
+}
+
+TEST_CASE("Loaded slots without plates keep their changes", "[PartPlateRows]")
+{
+    PlateFixture f(2);
+    PrinterSlot  kept{"Prusa MK4", "0.20mm MK4", {"Generic PETG"}};
+    kept.print_changes.set_key_value("layer_height", new ConfigOptionFloat(0.3));
+    f.plates.set_printer_slots({PrinterSlot{"Voron 0.2", "0.20mm Voron", {"Generic PLA"}}, kept},
+                               PrinterSlot{"Ender 3 V2", "0.20mm Standard", {"Generic PLA"}});
+    f.plates.load_printer_beds({PlatePrinterBed{}, small_bed(0)});
+
+    REQUIRE(f.plates.printer_slot(1) != nullptr);
+    CHECK(f.plates.first_plate_of_slot(1) == -1);
+    CHECK_THAT(f.plates.printer_slot(1)->print_changes.opt_float("layer_height"), WithinAbs(0.3, 1e-9));
+    // Adding the printer again finds its slot.
+    CHECK(f.plates.find_or_add_printer_slot("Prusa MK4") == 1);
+    CHECK(f.plates.find_or_add_printer_slot("Trident") == 2);
+}
+
+TEST_CASE("Saved printer slots list plate slots first, then kept changes", "[PartPlateRows]")
+{
+    std::vector<PrinterSlot> slots{PrinterSlot{"Voron 0.2", "0.20mm Voron", {"Generic PLA"}},
+                                   PrinterSlot{"Prusa MK4", "0.20mm MK4", {"Generic PETG"}},
+                                   PrinterSlot{"Trident", "0.20mm Trident", {"Generic PLA"}}};
+    slots[1].print_changes.set_key_value("layer_height", new ConfigOptionFloat(0.3));
+    std::vector<int> saved_index;
+    // Plate 0: project printer; plate 3: unknown slot.
+    const std::optional<PrinterSlotsData> data = select_saved_printer_slots(slots, {-1, 2, 0, 7}, 0, saved_index);
+    REQUIRE(data.has_value());
+    REQUIRE(data->slots.size() == 3);
+    CHECK(data->slots[0].printer == "Trident");
+    CHECK(data->slots[1].printer == "Voron 0.2");
+    CHECK(data->slots[2].printer == "Prusa MK4");
+    CHECK(saved_index == std::vector<int>{-1, 0, 1, -1});
+    CHECK(data->active_slot == 1);
+
+    PrinterSlotsData loaded;
+    REQUIRE(printer_slots_from_json(printer_slots_to_json(*data), loaded));
+    REQUIRE(loaded.slots.size() == 3);
+    CHECK_THAT(loaded.slots[2].print_changes.opt_float("layer_height"), WithinAbs(0.3, 1e-9));
+}
+
+TEST_CASE("Saved printer slots skip unchanged and active plate-less slots", "[PartPlateRows]")
+{
+    std::vector<PrinterSlot> slots{PrinterSlot{"Voron 0.2", "0.20mm Voron", {"Generic PLA"}},
+                                   PrinterSlot{"Prusa MK4", "0.20mm MK4", {"Generic PETG"}}};
+    std::vector<int>         saved_index;
+    // No own plates, project printer active, no changes.
+    CHECK_FALSE(select_saved_printer_slots(slots, {-1, -1}, -1, saved_index).has_value());
+    CHECK(saved_index == std::vector<int>{-1, -1});
+
+    slots[0].printer_changes.set_key_value("printable_height", new ConfigOptionFloat(200.));
+    slots[1].print_changes.set_key_value("layer_height", new ConfigOptionFloat(0.3));
+    // The active slot's changes are in the presets.
+    const std::optional<PrinterSlotsData> data = select_saved_printer_slots(slots, {-1, -1}, 0, saved_index);
+    REQUIRE(data.has_value());
+    REQUIRE(data->slots.size() == 1);
+    CHECK(data->slots[0].printer == "Prusa MK4");
+    CHECK(data->active_slot == -1);
+    CHECK(saved_index == std::vector<int>{-1, -1});
 }
 
 TEST_CASE("Loaded printer beds form rows without moving objects", "[PartPlateRows]")

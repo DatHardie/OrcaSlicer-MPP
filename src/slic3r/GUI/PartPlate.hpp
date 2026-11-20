@@ -159,6 +159,11 @@ struct PrinterSlotsData
 std::string printer_slots_to_json(const PrinterSlotsData& data);
 // False on invalid input; data is then unchanged.
 bool printer_slots_from_json(const std::string& json, PrinterSlotsData& data);
+// Slots with plates first, then plate-less kept changes.
+std::optional<PrinterSlotsData> select_saved_printer_slots(const std::vector<PrinterSlot>& slots,
+                                                           const std::vector<int>&         plate_slots,
+                                                           int                             active_slot,
+                                                           std::vector<int>&               plate_saved_index);
 
 class PartPlate : public ObjectBase
 {

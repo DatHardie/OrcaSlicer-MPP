@@ -15999,7 +15999,15 @@ void Plater::select_printer_plates(int slot)
 void Plater::priv::store_printer_slots(PlateDataPtrs& plate_data, Model& target)
 {
     target.printer_slots.clear();
-    if (!multi_printer_enabled() || (!partplate_list.has_printer_beds() && m_active_printer_slot < 0))
+    if (!multi_printer_enabled())
+        return;
+    std::vector<int> plate_slots;
+    for (size_t i = 0; i < plate_data.size() && int(i) < partplate_list.get_plate_count(); ++i)
+        plate_slots.push_back(partplate_list.get_plate(int(i))->printer_bed().slot);
+    std::vector<int>                saved_index;
+    std::optional<PrinterSlotsData> data = select_saved_printer_slots(partplate_list.printer_slots(), plate_slots,
+                                                                      m_active_printer_slot, saved_index);
+    if (!data)
         return;
     const PresetBundle& bundle = *wxGetApp().preset_bundle;
     // Active slot changes live in project config.
@@ -16013,27 +16021,17 @@ void Plater::priv::store_printer_slots(PlateDataPtrs& plate_data, Model& target)
         slot.filament_changes.clear();
         return slot;
     };
-    PrinterSlotsData data;
     const PrinterSlot& project = *partplate_list.printer_slot(-1);
-    data.project_printer = m_active_printer_slot == -1 ? active(project) : project;
-    // Only slots with plates, numbered from 0.
-    std::map<int, int> saved_index;
-    for (size_t i = 0; i < plate_data.size() && int(i) < partplate_list.get_plate_count(); ++i) {
-        const int          slot   = partplate_list.get_plate(int(i))->printer_bed().slot;
-        const PrinterSlot* source = slot >= 0 ? partplate_list.printer_slot(slot) : nullptr;
-        if (source == nullptr)
-            continue;
-        auto [it, added] = saved_index.try_emplace(slot, int(data.slots.size()));
-        if (added)
-            data.slots.push_back(slot == m_active_printer_slot ? active(*source) : *source);
-        plate_data[i]->printer_slot = it->second;
-    }
-    if (auto it = saved_index.find(m_active_printer_slot); it != saved_index.end())
-        data.active_slot = it->second;
-    PresetBundle::erase_secure_options(data.project_printer.printer_changes);
-    for (PrinterSlot& slot : data.slots)
+    data->project_printer      = m_active_printer_slot == -1 ? active(project) : project;
+    if (data->active_slot >= 0)
+        data->slots[data->active_slot] = active(data->slots[data->active_slot]);
+    for (size_t i = 0; i < saved_index.size(); ++i)
+        if (saved_index[i] >= 0)
+            plate_data[i]->printer_slot = saved_index[i];
+    PresetBundle::erase_secure_options(data->project_printer.printer_changes);
+    for (PrinterSlot& slot : data->slots)
         PresetBundle::erase_secure_options(slot.printer_changes);
-    target.printer_slots = printer_slots_to_json(data);
+    target.printer_slots = printer_slots_to_json(*data);
 }
 
 // Model id and nozzles of inactive plate printers.

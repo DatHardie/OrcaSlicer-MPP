@@ -9477,6 +9477,37 @@ bool slot_from_json(const nlohmann::json& in, PrinterSlot& slot)
 
 } // namespace
 
+std::optional<PrinterSlotsData> select_saved_printer_slots(const std::vector<PrinterSlot>& slots,
+                                                           const std::vector<int>&         plate_slots,
+                                                           int                             active_slot,
+                                                           std::vector<int>&               plate_saved_index)
+{
+	plate_saved_index.assign(plate_slots.size(), -1);
+	const bool own_plates   = std::any_of(plate_slots.begin(), plate_slots.end(), [](int slot) { return slot >= 0; });
+	const bool kept_changes = std::any_of(slots.begin(), slots.end(), [](const PrinterSlot& slot) { return slot.has_changes(); });
+	if (!own_plates && active_slot < 0 && !kept_changes)
+		return std::nullopt;
+
+	PrinterSlotsData   data;
+	std::map<int, int> saved_index;
+	for (size_t i = 0; i < plate_slots.size(); ++i) {
+		const int slot = plate_slots[i];
+		if (slot < 0 || slot >= int(slots.size()))
+			continue;
+		auto [it, added] = saved_index.try_emplace(slot, int(data.slots.size()));
+		if (added)
+			data.slots.push_back(slots[slot]);
+		plate_saved_index[i] = it->second;
+	}
+	// Plate-less slots keep their unsaved changes.
+	for (int slot = 0; slot < int(slots.size()); ++slot)
+		if (saved_index.count(slot) == 0 && slot != active_slot && slots[slot].has_changes())
+			data.slots.push_back(slots[slot]);
+	if (auto it = saved_index.find(active_slot); it != saved_index.end())
+		data.active_slot = it->second;
+	return data;
+}
+
 std::string printer_slots_to_json(const PrinterSlotsData& data)
 {
 	nlohmann::json slots = nlohmann::json::array();
