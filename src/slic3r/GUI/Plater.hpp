@@ -364,6 +364,8 @@ public:
     bool check_printer_slot_changes(const wxString& caption, const wxString& header);
     // Option value at startup.
     bool multi_printer_enabled() const;
+    // Some plates use their own printer.
+    bool has_plate_printers() const;
     void normalize_bed_types(bool printer_setting_changed);
     int  save_project_if_dirty(const wxString& reason);
     void reset_project_dirty_after_save();

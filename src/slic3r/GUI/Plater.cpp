@@ -7297,6 +7297,7 @@ struct Plater::priv
     bool assign_plate_printer(int plate_index, const std::string& printer);
     void store_printer_slots(PlateDataPtrs& plate_data, Model& target);
     bool plate_printer_ids(int plate, std::string& model_id, std::string& nozzles);
+    void send_plates_to_own_printers();
     void restore_printer_slots(const PlateDataPtrs& plate_data, const std::string& json, const DynamicPrintConfig& project_config);
     //BBS: add a flag to ignore cancel event
     bool m_ignore_event{false};
@@ -14348,9 +14349,24 @@ void Plater::priv::on_action_print_all(SimpleEvent&)
     PresetBundle& preset_bundle = *wxGetApp().preset_bundle;
     if (preset_bundle.use_bbl_network() || wxGetApp().app_config->get_bool("use_printer_agents")) {
         open_machine_select_dialog(PLATE_ALL_IDX);
+    } else if (q->has_plate_printers()) {
+        send_plates_to_own_printers();
     } else {
         q->send_gcode_legacy(PLATE_ALL_IDX, nullptr);
     }
+}
+
+// Each sliced plate goes to its printer's host.
+void Plater::priv::send_plates_to_own_printers()
+{
+    const int original = partplate_list.get_curr_plate_index();
+    for (int i = 0; i < partplate_list.get_plate_count(); ++i) {
+        if (!partplate_list.get_plate(i)->is_slice_result_ready_for_print())
+            continue;
+        q->select_sliced_plate(i);
+        q->send_gcode_legacy(PLATE_CURRENT_IDX, nullptr);
+    }
+    q->select_sliced_plate(original);
 }
 
 void Plater::priv::on_action_export_gcode(SimpleEvent&)
@@ -15455,6 +15471,11 @@ bool Plater::priv::multi_printer_enabled() const
 bool Plater::multi_printer_enabled() const
 {
     return p->multi_printer_enabled();
+}
+
+bool Plater::has_plate_printers() const
+{
+    return p->multi_printer_enabled() && p->partplate_list.has_printer_beds();
 }
 
 // First plate of another slot using this printer.
