@@ -15,14 +15,23 @@ Works now:
 - A new plate takes the printer of the selected plate.
 - The project file stores the printer of each plate and unsaved preset changes.
 - With a print host such as Moonraker, **Print** sends the selected plate to its printer, and **Print all** sends each sliced plate to its own printer.
-- **Project Printers** in the Prepare sidebar lists each printer with its plates and how many are sliced. Adding a printer there creates a plate for it, clicking a printer shows its plates, and removing a printer moves its plates back to the project printer. Each printer keeps at least one plate until it is removed there. Unsaved preset changes of a printer that leaves the project are asked about.
+- **Project Printers** in the Prepare sidebar lists the printers with their plates. Adding a printer creates a plate for it, clicking a printer selects its plates, and removing a printer moves its plates to the project printer.
 
 ## Use
 
 1. Turn on **Preferences → Behaviour → Multi-printer projects (experimental)** and restart OrcaSlicer. The option is off by default.
-2. Add a printer under **Project Printers**, or choose a **Printer** in the plate settings. **Project printer** is the normal printer of the project.
+2. Add a printer under **Project Printers**, or change the **Printer** of a plate in the plate settings. **Project printer** is the normal printer of the project.
 
 The plates of each printer form one row. Without plates for other printers, OrcaSlicer works as before.
+
+## Pitfalls
+
+- Every printer keeps at least one plate. To drop a printer, remove it under **Project Printers**.
+- Selecting a plate switches the presets. Unsaved changes stay with their printer and mark the project as modified.
+- Removing a printer or rearranging plates discards the slice results of all plates.
+- If undo or redo drops a printer with unsaved changes, it asks until **Save** or **Discard** is chosen.
+- Selecting a plate of another printer zooms to its bed.
+- OrcaSlicer behaviour: saving a filament in the unsaved-changes dialog also sets filament 1 to it, and the print button returns to its default action after a printer change.
 
 ## Limitations
 
