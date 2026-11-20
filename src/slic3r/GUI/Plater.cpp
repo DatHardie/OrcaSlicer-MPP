@@ -988,6 +988,14 @@ struct Sidebar::priv
     ScalableButton* m_printer_setting = nullptr;
     wxStaticText *  m_text_printer_settings = nullptr;
     wxPanel* m_panel_printer_content = nullptr;
+    // Multi-printer project printers
+    StaticBox*      m_panel_project_printers_title     = nullptr;
+    wxPanel*        m_panel_project_printers_separator = nullptr;
+    wxPanel*        m_panel_project_printers_content   = nullptr;
+    ScalableButton* m_project_printers_icon            = nullptr;
+    ScalableButton* m_project_printers_add             = nullptr;
+    wxStaticText*   m_project_printers_count           = nullptr;
+    std::vector<Plater::ProjectPrinter> m_project_printers;
     // Filament Track Switch status overlay: an icon floated over the left/single extruder AMS area,
     // shown only when the switch is installed (green when ready, red when not calibrated).
     wxStaticBitmap* extruder_separator_icon = nullptr;
@@ -3268,6 +3276,52 @@ Sidebar::Sidebar(Plater *parent)
         scrolled_sizer->Add(p->m_panel_printer_content, 0, wxEXPAND, 0);
     }
 
+    // Multi-printer: printers of the project
+    if (wxGetApp().app_config->get_bool("multi_printer_projects")) {
+        StaticBox* title_panel = p->m_panel_project_printers_title = new StaticBox(p->scrolled, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxBORDER_NONE);
+        title_panel->SetBackgroundColor(title_bg);
+        title_panel->SetBackgroundColor2(0xF1F1F1);
+        p->m_project_printers_icon  = new ScalableButton(title_panel, wxID_ANY, "printer");
+        Label* title                = new Label(title_panel, _L("Project Printers"), LB_PROPAGATE_MOUSE_EVENT);
+        p->m_project_printers_count = new Label(title_panel, "(0)", LB_PROPAGATE_MOUSE_EVENT);
+        p->m_project_printers_add   = new ScalableButton(title_panel, wxID_ANY, "add");
+        p->m_project_printers_add->SetToolTip(_L("Add printer"));
+        p->m_project_printers_add->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { show_add_printer_menu(); });
+
+        wxBoxSizer* title_sizer = new wxBoxSizer(wxHORIZONTAL);
+        title_sizer->Add(p->m_project_printers_icon, 0, wxALIGN_CENTER | wxLEFT, FromDIP(SidebarProps::TitlebarMargin()));
+        title_sizer->Add(title, 0, wxALIGN_CENTER | wxLEFT | wxRIGHT, FromDIP(SidebarProps::ElementSpacing()));
+        title_sizer->Add(p->m_project_printers_count, 0, wxALIGN_CENTER);
+        title_sizer->AddStretchSpacer();
+        title_sizer->Add(p->m_project_printers_add, 0, wxALIGN_CENTER);
+        title_sizer->AddSpacer(FromDIP(SidebarProps::TitlebarMargin()));
+        title_sizer->SetMinSize(-1, 3 * em);
+        title_panel->SetSizer(title_sizer);
+        title_panel->Layout();
+        scrolled_sizer->Add(title_panel, 0, wxEXPAND | wxALL, 0);
+
+        p->m_panel_project_printers_separator = new wxPanel(p->scrolled, wxID_ANY, wxDefaultPosition, wxSize(-1, FromDIP(2)));
+        p->m_panel_project_printers_separator->SetBackgroundColour("#FFFFFF");
+        scrolled_sizer->Add(p->m_panel_project_printers_separator, 0, wxEXPAND);
+
+        p->m_panel_project_printers_content = new wxPanel(p->scrolled, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL);
+        p->m_panel_project_printers_content->SetBackgroundColour(wxColour(255, 255, 255));
+        p->m_panel_project_printers_content->SetSizer(new wxBoxSizer(wxVERTICAL));
+        scrolled_sizer->Add(p->m_panel_project_printers_content, 0, wxEXPAND);
+
+        // Clicks left of the add button fold.
+        auto toggle_section = [this](wxMouseEvent& e) {
+            if (e.GetPosition().x > p->m_project_printers_add->GetPosition().x - FromDIP(SidebarProps::IconSpacing()))
+                return;
+            const bool shown = p->m_panel_project_printers_content->IsShown();
+            p->m_panel_project_printers_content->Show(!shown);
+            p->m_panel_project_printers_separator->Show(shown);
+            m_scrolled_sizer->Layout();
+        };
+        title_panel->Bind(wxEVT_LEFT_DOWN, toggle_section);
+        title_panel->Bind(wxEVT_LEFT_DCLICK, toggle_section);
+    }
+
     {
 
     // Orca: Sidebar - Filament titlebar UI
@@ -4190,6 +4244,7 @@ void Sidebar::update_presets(Preset::Type preset_type)
 
     // Synchronize config.ini with the current selections.
     wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
+    update_project_printers();
 
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": exit.");
 }
@@ -5521,6 +5576,106 @@ void Sidebar::update_filaments_counter(bool force_layout)
         m_scrolled_sizer->Layout();
 }
 
+void Sidebar::update_project_printers(bool force)
+{
+    wxPanel* content = p->m_panel_project_printers_content;
+    Plater*  plater  = wxGetApp().plater();
+    if (content == nullptr || plater == nullptr)
+        return;
+    std::vector<Plater::ProjectPrinter> printers = plater->project_printers();
+    if (!force && printers == p->m_project_printers)
+        return;
+    p->m_project_printers = printers;
+
+    wxWindowUpdateLocker freeze(content);
+    wxSizer* sizer = content->GetSizer();
+    sizer->Clear(true);
+    p->m_project_printers_count->SetLabel(wxString::Format("(%d)", int(printers.size())));
+    const PresetBundle& bundle = *wxGetApp().preset_bundle;
+    for (const Plater::ProjectPrinter& printer : printers) {
+        const Preset*  preset = bundle.printers.find_preset(printer.printer, false);
+        // Labels read '&' as mnemonic.
+        const wxString label = wxControl::EscapeMnemonics(from_u8(preset != nullptr ? preset->label(false) : printer.printer));
+        // TRN %1% is a printer name.
+        const wxString name  = printer.slot < 0 ? format_wxstr(_L("%1% (project printer)"), label) : label;
+        const double   width = std::round(printer.bed_size.x() * 10.) / 10.;
+        const double   depth = std::round(printer.bed_size.y() * 10.) / 10.;
+        // TRN Bed width x depth, then plate count.
+        const wxString plates = format_wxstr(_L_PLURAL("%1% x %2% mm, %3% plate", "%1% x %2% mm, %3% plates", printer.plates),
+                                             width, depth, printer.plates);
+        const wxString host   = printer.host.empty() ?
+                                    _L("No print host") :
+                                    format_wxstr(_L("Print host: %1%"), wxControl::EscapeMnemonics(from_u8(printer.host)));
+
+        wxPanel* row = new wxPanel(content, wxID_ANY);
+        row->SetBackgroundColour(wxColour(255, 255, 255));
+        row->SetToolTip(printer.plates > 0 ? _L("Show the plates of this printer") : wxString());
+        auto add_label = [row](const wxString& text, const wxFont& font) {
+            Label* line = new Label(row, font, text, LB_PROPAGATE_MOUSE_EVENT | wxST_ELLIPSIZE_END);
+            line->SetToolTip(row->GetToolTipText());
+            return line;
+        };
+        wxBoxSizer* lines = new wxBoxSizer(wxVERTICAL);
+        lines->Add(add_label(name, printer.active ? Label::Head_13 : Label::Body_13), 0, wxEXPAND);
+        lines->Add(add_label(plates, Label::Body_12), 0, wxEXPAND | wxTOP, FromDIP(2));
+        lines->Add(add_label(host, Label::Body_12), 0, wxEXPAND | wxTOP, FromDIP(2));
+
+        wxBoxSizer* row_sizer = new wxBoxSizer(wxHORIZONTAL);
+        row_sizer->Add(lines, 1, wxALIGN_CENTER_VERTICAL);
+        if (printer.plates > 0)
+            // TRN Sliced plates of all plates.
+            row_sizer->Add(add_label(format_wxstr(_L("%1%/%2% sliced"), printer.sliced, printer.plates), Label::Body_12), 0,
+                           wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(SidebarProps::ElementSpacing()));
+        if (printer.slot >= 0) {
+            ScalableButton* remove = new ScalableButton(row, wxID_ANY, "delete");
+            remove->SetToolTip(_L("Remove printer"));
+            // The handler destroys this button.
+            remove->Bind(wxEVT_BUTTON, [slot = printer.slot](wxCommandEvent&) {
+                wxGetApp().CallAfter([slot]() { wxGetApp().plater()->remove_printer(slot); });
+            });
+            row_sizer->Add(remove, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(SidebarProps::WideSpacing()));
+        }
+        row->SetSizer(row_sizer);
+        if (printer.plates > 0) {
+            row->SetCursor(wxCURSOR_HAND);
+            row->Bind(wxEVT_LEFT_DOWN, [slot = printer.slot](wxMouseEvent&) {
+                wxGetApp().CallAfter([slot]() { wxGetApp().plater()->select_printer_plates(slot); });
+            });
+        }
+        wxGetApp().UpdateDarkUIWin(row);
+        sizer->Add(row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(SidebarProps::ContentMargin()));
+    }
+    sizer->AddSpacer(FromDIP(SidebarProps::ContentMarginV()));
+    content->Layout();
+    m_scrolled_sizer->Layout();
+}
+
+// Printer presets not yet in the project.
+void Sidebar::show_add_printer_menu()
+{
+    Plater* plater = wxGetApp().plater();
+    if (plater == nullptr)
+        return;
+    std::vector<std::string> used;
+    for (const Plater::ProjectPrinter& printer : plater->project_printers())
+        used.push_back(printer.printer);
+    wxMenu menu;
+    for (const Preset& preset : wxGetApp().preset_bundle->printers) {
+        if (!preset.is_visible || preset.is_default || preset.printer_technology() != ptFFF ||
+            std::find(used.begin(), used.end(), preset.name) != used.end())
+            continue;
+        wxMenuItem* item = menu.Append(wxID_ANY, wxControl::EscapeMnemonics(from_u8(preset.label(false))));
+        menu.Bind(wxEVT_MENU, [name = preset.name](wxCommandEvent&) {
+            if (wxGetApp().plater()->add_printer_plate(name) < 0)
+                show_error(wxGetApp().plater(), _L("No plate could be added for this printer."));
+        }, item->GetId());
+    }
+    if (menu.GetMenuItemCount() == 0)
+        menu.Append(wxID_ANY, _L("No other printer presets"))->Enable(false);
+    ScalableButton* add = p->m_project_printers_add;
+    p->m_panel_project_printers_title->PopupMenu(&menu, add->GetPosition() + wxPoint(0, add->GetSize().y));
+}
+
 void Sidebar::msw_rescale()
 {
     SetMinSize(wxSize(39 * wxGetApp().em_unit(), -1));
@@ -5568,6 +5723,12 @@ void Sidebar::msw_rescale()
     p->m_purge_mode_btn->Rescale();
     p->m_flushing_volume_btn->Rescale();
     set_flushing_volume_warning(is_flush_config_modified()); // ORCA reapply appearance
+    if (p->m_project_printers_icon != nullptr) {
+        p->m_panel_project_printers_title->GetSizer()->SetMinSize(-1, 3 * wxGetApp().em_unit());
+        p->m_project_printers_icon->msw_rescale();
+        p->m_project_printers_add->msw_rescale();
+        update_project_printers(true);
+    }
 
     //BBS
     p->left_extruder->Rescale();
@@ -5654,6 +5815,11 @@ void Sidebar::sys_color_changed()
     p->m_purge_mode_btn->Rescale();
     p->m_flushing_volume_btn->Rescale();
     set_flushing_volume_warning(is_flush_config_modified()); // ORCA reapply appearance
+    if (p->m_project_printers_icon != nullptr) {
+        p->m_project_printers_icon->msw_rescale();
+        p->m_project_printers_add->msw_rescale();
+        update_project_printers(true);
+    }
 
     // BBS
 #if 0
@@ -8496,6 +8662,7 @@ void Plater::priv::update(unsigned int flags)
         this->restart_background_process(update_status);
     else
         this->schedule_background_process();
+    sidebar->update_project_printers();
 
     // BBS
 #if 0
@@ -11797,6 +11964,7 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
     if (invalidated == Print::APPLY_STATUS_INVALIDATED) {
         //BBS: update current plater's slicer result to invalid
         this->background_process.get_current_plate()->update_slice_result_valid_state(false);
+        sidebar->update_project_printers();
 
         //no need, should be done in background_process.apply
         //this->background_process.get_current_gcode_result()->reset();
@@ -13899,6 +14067,7 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         update_fff_scene_only_shells();
         q->Thaw();
     }
+    sidebar->update_project_printers();
     if (auto_reslice_after_cancel) {
         auto_reslice_after_cancel = false;
         schedule_auto_reslice_if_needed();
@@ -15540,6 +15709,7 @@ void Plater::priv::activate_printer_slot()
     const int slot = partplate_list.get_curr_plate()->printer_bed().slot;
     if (slot == m_active_printer_slot)
         return;
+    ScopeGuard refresh_list([this]() { sidebar->update_project_printers(); });
 
     PresetBundle& bundle = *wxGetApp().preset_bundle;
     if (PrinterSlot* leaving = partplate_list.printer_slot(m_active_printer_slot)) {
@@ -15630,8 +15800,143 @@ bool Plater::priv::assign_plate_printer(int plate_index, const std::string& prin
     std::optional<PlatePrinterBed> bed = preset != nullptr ? printer_bed_from(preset->config) : std::nullopt;
     if (!bed)
         return false;
+    // The active slot may have another printer now.
+    if (PrinterSlot* active = m_active_printer_slot >= 0 ? partplate_list.printer_slot(m_active_printer_slot) : nullptr)
+        active->printer = wxGetApp().preset_bundle->printers.get_selected_preset_name();
     bed->slot = partplate_list.find_or_add_printer_slot(printer);
     return partplate_list.set_plate_printer_bed(plate_index, std::move(*bed));
+}
+
+bool Plater::ProjectPrinter::operator==(const ProjectPrinter& other) const
+{
+    return slot == other.slot && printer == other.printer && host == other.host && bed_size == other.bed_size &&
+           plates == other.plates && sliced == other.sliced && active == other.active;
+}
+
+std::vector<Plater::ProjectPrinter> Plater::project_printers() const
+{
+    std::vector<ProjectPrinter> printers;
+    if (!p->multi_printer_enabled())
+        return printers;
+    const PresetBundle& bundle = *wxGetApp().preset_bundle;
+    PartPlateList&      plates = p->partplate_list;
+    auto add = [&](int slot) {
+        ProjectPrinter printer;
+        printer.slot   = slot;
+        printer.active = slot == p->m_active_printer_slot;
+        printer.plates = plates.plate_count_of_slot(slot);
+        for (int i = 0; i < plates.get_plate_count(); ++i)
+            if (PartPlate* plate = plates.get_plate(i); plate->printer_bed().slot == slot && plate->is_slice_result_valid())
+                ++printer.sliced;
+        std::optional<DynamicPrintConfig> config;
+        if (printer.active) {
+            printer.printer = bundle.printers.get_selected_preset_name();
+            config          = bundle.printers.get_edited_preset().config;
+        } else if (const PrinterSlot* source = plates.printer_slot(slot)) {
+            printer.printer = source->printer;
+            config          = slot_printer_config(*source);
+        }
+        if (config) {
+            if (const auto* host = config->option<ConfigOptionString>("print_host"))
+                printer.host = host->value;
+            if (const std::optional<PlatePrinterBed> bed = printer_bed_from(*config))
+                printer.bed_size = BoundingBoxf(bed->shape).size();
+        }
+        printers.push_back(std::move(printer));
+    };
+    add(-1);
+    std::vector<int> listed;
+    for (int i = 0; i < plates.get_plate_count(); ++i) {
+        const int slot = plates.get_plate(i)->printer_bed().slot;
+        if (slot >= 0 && std::find(listed.begin(), listed.end(), slot) == listed.end()) {
+            listed.push_back(slot);
+            add(slot);
+        }
+    }
+    return printers;
+}
+
+int Plater::add_printer_plate(const std::string& printer)
+{
+    const Preset*                        preset = fff_printer_preset(printer);
+    const std::optional<PlatePrinterBed> bed    = preset != nullptr ? printer_bed_from(preset->config) : std::nullopt;
+    if (!p->multi_printer_enabled() || !bed || !PartPlateList::valid_printer_bed(*bed) || !can_add_plate())
+        return -1;
+    take_snapshot("add printer");
+    const int plate = p->partplate_list.create_plate();
+    if (plate < 0)
+        return plate;
+    if (!p->assign_plate_printer(plate, printer)) {
+        p->partplate_list.delete_plate(plate);
+        return -1;
+    }
+    p->partplate_list.select_plate(plate);
+    p->activate_printer_slot();
+    set_plater_dirty(true);
+    update();
+    p->camera.requires_zoom_to_plate = REQUIRES_ZOOM_TO_ALL_PLATE;
+    return plate;
+}
+
+bool Plater::remove_printer(int slot)
+{
+    PartPlateList& plates = p->partplate_list;
+    if (!p->multi_printer_enabled() || slot < 0 || plates.first_plate_of_slot(slot) < 0)
+        return false;
+    if (is_background_process_slicing()) {
+        show_error(this, _L("The printer cannot be removed while slicing."));
+        return false;
+    }
+    // Its unsaved preset changes are offered first.
+    const PrinterSlot* removed   = plates.printer_slot(slot);
+    const int          original  = plates.get_curr_plate_index();
+    const bool         was_dirty = is_project_dirty();
+    if (slot != p->m_active_printer_slot && removed != nullptr && removed->has_changes())
+        select_plate(plates.first_plate_of_slot(slot));
+    if (slot == p->m_active_printer_slot) {
+        const bool keep = wxGetApp().check_and_save_current_preset_changes(_L("Remove printer"), _L("Some presets are modified."));
+        if (plates.get_curr_plate_index() != original) {
+            select_plate(original);
+            if (is_preview_shown())
+                reload_print();
+        }
+        if (!keep) {
+            // Cancelling leaves a saved project unmodified.
+            if (!was_dirty) {
+                update_project_dirty_from_presets();
+                set_plater_dirty(false);
+            }
+            return false;
+        }
+    }
+    take_snapshot("remove printer");
+    plates.clear_slot_printer_beds(slot);
+    p->activate_printer_slot();
+    // Saved or discarded changes must not return.
+    if (PrinterSlot* left = plates.printer_slot(slot)) {
+        left->printer_changes.clear();
+        left->print_changes.clear();
+        left->filament_changes.clear();
+        left->changed_filament.clear();
+    }
+    set_plater_dirty(true);
+    update();
+    return true;
+}
+
+void Plater::select_printer_plates(int slot)
+{
+    const int plate = p->partplate_list.first_plate_of_slot(slot);
+    if (plate < 0)
+        return;
+    // The preview shows that plate, not all stats.
+    if (is_preview_shown()) {
+        p->preview->get_canvas3d()->reset_select_plate_toolbar_selection();
+        select_sliced_plate(plate);
+    } else
+        select_plate(plate);
+    p->camera.requires_zoom_to_plate = REQUIRES_ZOOM_TO_CUR_PLATE;
+    get_current_canvas3D()->set_as_dirty();
 }
 
 // Saves slots and plate printers with the project.
@@ -15792,10 +16097,7 @@ bool Plater::check_printer_slot_changes(const wxString& caption, const wxString&
     }
     bool ok = true;
     for (int slot : changed) {
-        int plate = -1;
-        for (int i = 0; i < plates.get_plate_count() && plate < 0; ++i)
-            if (plates.get_plate(i)->printer_bed().slot == slot)
-                plate = i;
+        const int plate = plates.first_plate_of_slot(slot);
         if (plate < 0)
             continue;
         select_plate(plate);

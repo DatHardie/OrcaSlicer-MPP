@@ -446,3 +446,63 @@ TEST_CASE("Setting printer slots replaces slots and project printer", "[PartPlat
     CHECK(f.plates.printer_slot(-1)->printer == "Ender 3 V2");
     CHECK(f.plates.printer_slot(1) == nullptr);
 }
+
+TEST_CASE("Plates of a slot are found and counted", "[PartPlateRows]")
+{
+    PlateFixture f(4);
+    REQUIRE(f.plates.set_plate_printer_bed(1, small_bed(0)));
+    REQUIRE(f.plates.set_plate_printer_bed(3, small_bed(0)));
+    CHECK(f.plates.first_plate_of_slot(0) == 1);
+    CHECK(f.plates.plate_count_of_slot(0) == 2);
+    // Slot -1 is the project printer.
+    CHECK(f.plates.first_plate_of_slot(-1) == 0);
+    CHECK(f.plates.plate_count_of_slot(-1) == 2);
+    CHECK(f.plates.first_plate_of_slot(1) == -1);
+    CHECK(f.plates.plate_count_of_slot(1) == 0);
+    CHECK(f.plates.first_plate_of_slot(7) == -1);
+}
+
+TEST_CASE("Removing a printer moves its plates and objects back", "[PartPlateRows]")
+{
+    PlateFixture f(3);
+    const Vec2d  legacy = f.origin(2);
+    REQUIRE(f.plates.set_plate_printer_bed(2, small_bed(0)));
+    ModelObject* object = f.model.add_object();
+    object->add_volume(make_cube(20., 20., 20.));
+    ModelInstance* instance = object->add_instance();
+    const Vec2d    in_row   = f.origin(2) + Vec2d(30., 30.);
+    instance->set_offset(Vec3d(in_row.x(), in_row.y(), 10.));
+    f.plates.reload_all_objects();
+
+    REQUIRE(f.plates.clear_slot_printer_beds(0));
+    CHECK_FALSE(f.plates.has_printer_beds());
+    CHECK_THAT(f.origin(2).x(), WithinAbs(legacy.x(), 1e-6));
+    CHECK_THAT(f.origin(2).y(), WithinAbs(legacy.y(), 1e-6));
+    // Orca keeps objects centred when sizes change.
+    const double centred = 30. + (project_size - 120.) / 2.;
+    CHECK_THAT(instance->get_offset().x(), WithinAbs(legacy.x() + centred, 1e-6));
+    CHECK_THAT(instance->get_offset().y(), WithinAbs(legacy.y() + centred, 1e-6));
+    CHECK(f.plates.get_plate(2)->contain_instance(0, 0));
+}
+
+TEST_CASE("Removing a printer keeps other printers' plates", "[PartPlateRows]")
+{
+    PlateFixture f(3);
+    REQUIRE(f.plates.set_plate_printer_bed(1, small_bed(0)));
+    REQUIRE(f.plates.set_plate_printer_bed(2, small_bed(1)));
+    REQUIRE(f.plates.clear_slot_printer_beds(0));
+    CHECK(f.plates.get_plate(1)->printer_bed().slot == -1);
+    CHECK(f.plates.get_plate(2)->printer_bed().slot == 1);
+    CHECK(f.plates.has_printer_beds());
+    check_size(f.plates.get_plate(1), project_size, project_size);
+    check_size(f.plates.get_plate(2), 120., 120.);
+}
+
+TEST_CASE("Removing a printer without plates or an invalid slot does nothing", "[PartPlateRows]")
+{
+    PlateFixture f(2);
+    REQUIRE(f.plates.set_plate_printer_bed(1, small_bed(0)));
+    const int slot = GENERATE(-1, 1, 5);
+    CHECK_FALSE(f.plates.clear_slot_printer_beds(slot));
+    CHECK(f.plates.get_plate(1)->printer_bed().slot == 0);
+}

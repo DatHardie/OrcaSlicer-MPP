@@ -7168,6 +7168,32 @@ void PartPlateList::set_printer_slots(std::vector<PrinterSlot> slots, PrinterSlo
 	m_project_printer = std::move(project_printer);
 }
 
+int PartPlateList::first_plate_of_slot(int slot) const
+{
+	for (size_t i = 0; i < m_plate_list.size(); ++i)
+		if (m_plate_list[i]->m_printer_bed.slot == slot)
+			return int(i);
+	return -1;
+}
+
+int PartPlateList::plate_count_of_slot(int slot) const
+{
+	return int(std::count_if(m_plate_list.begin(), m_plate_list.end(),
+		[slot](const PartPlate* plate) { return plate->m_printer_bed.slot == slot; }));
+}
+
+bool PartPlateList::clear_slot_printer_beds(int slot)
+{
+	if (slot < 0 || first_plate_of_slot(slot) < 0)
+		return false;
+	reload_all_objects();
+	for (PartPlate* plate : m_plate_list)
+		if (plate->m_printer_bed.slot == slot)
+			plate->m_printer_bed = PlatePrinterBed{};
+	apply_printer_beds(true);
+	return true;
+}
+
 void PartPlateList::load_printer_beds(std::vector<PlatePrinterBed> beds)
 {
 	beds.resize(m_plate_list.size());

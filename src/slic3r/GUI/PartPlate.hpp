@@ -921,7 +921,6 @@ class PartPlateList : public ObjectBase
     //compute shape position
     Vec2d compute_shape_position(int index, int cols);
     Vec2d printer_row_position(int index) const;
-    static bool valid_printer_bed(const PlatePrinterBed& bed);
     void apply_printer_beds(bool move_instances);
     int plate_bed_width(const PartPlate& plate) const;
     int plate_bed_depth(const PartPlate& plate) const;
@@ -1013,6 +1012,12 @@ public:
     int find_or_add_printer_slot(const std::string& printer);
     void clear_printer_slots();
     void set_printer_slots(std::vector<PrinterSlot> slots, PrinterSlot project_printer);
+    // First plate of a slot, -1 if none.
+    int first_plate_of_slot(int slot) const;
+    int plate_count_of_slot(int slot) const;
+    // Its plates go back to the project printer.
+    bool clear_slot_printer_beds(int slot);
+    static bool valid_printer_bed(const PlatePrinterBed& bed);
     // One bed per plate; objects keep their positions.
     void load_printer_beds(std::vector<PlatePrinterBed> beds);
     // Bed for plates created from now on.

@@ -174,6 +174,7 @@ class Sidebar : public wxPanel
     SyncAmsInfoDialog*                      m_sync_dlg{nullptr};
 
     void update_sync_ams_btn_enable(wxUpdateUIEvent &e);
+    void show_add_printer_menu();
 
 public:
     enum DockingState
@@ -207,6 +208,8 @@ public:
     void change_top_border_for_mode_sizer(bool increase_border);
     void update_filaments_area_height();
     void update_filaments_counter(bool force_layout = false);
+    // Rebuilds the project printer list on change.
+    void update_project_printers(bool force = false);
     void msw_rescale();
     void sys_color_changed();
     void search();
@@ -366,6 +369,25 @@ public:
     bool multi_printer_enabled() const;
     // Some plates use their own printer.
     bool has_plate_printers() const;
+    // A printer of the project and its plates.
+    struct ProjectPrinter
+    {
+        int         slot{-1};
+        std::string printer;
+        std::string host;
+        Vec2d       bed_size{Vec2d::Zero()};
+        int         plates{0};
+        int         sliced{0};
+        bool        active{false};
+        bool        operator==(const ProjectPrinter& other) const;
+    };
+    // Project printer first, then plate order.
+    std::vector<ProjectPrinter> project_printers() const;
+    // New plate for the printer, -1 on failure.
+    int  add_printer_plate(const std::string& printer);
+    // Its plates go back to the project printer.
+    bool remove_printer(int slot);
+    void select_printer_plates(int slot);
     void normalize_bed_types(bool printer_setting_changed);
     int  save_project_if_dirty(const wxString& reason);
     void reset_project_dirty_after_save();
