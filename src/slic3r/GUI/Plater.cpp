@@ -11652,6 +11652,9 @@ void Plater::priv::schedule_auto_reslice_if_needed()
     PartPlate* plate = partplate_list.get_curr_plate();
     if (plate == nullptr || !plate->has_printable_instances())
         return;
+    // Another printer is only loaded briefly.
+    if (multi_printer_enabled() && m_active_printer_slot != plate->printer_bed().slot)
+        return;
 
     if (background_process.running() || m_is_slicing) {
         // Remember to restart once the current slice stops and cancel it now.
@@ -11695,6 +11698,8 @@ void Plater::priv::trigger_auto_reslice_now()
 
     PartPlate* plate = this->partplate_list.get_curr_plate();
     if (plate == nullptr || !plate->has_printable_instances())
+        return;
+    if (multi_printer_enabled() && m_active_printer_slot != plate->printer_bed().slot)
         return;
 
     this->q->reslice();
@@ -15709,6 +15714,8 @@ void Plater::priv::restore_preset_changes(PrinterSlot& slot)
     restore(Preset::TYPE_FILAMENT, bundle.filaments, slot.filament_changes, slot.changed_filament);
 }
 
+static const Preset* fff_printer_preset(const std::string& printer);
+
 // Save or discard changes of a leaving printer.
 bool Plater::priv::resolve_leaving_printer_changes()
 {
@@ -15738,11 +15745,14 @@ bool Plater::priv::resolve_orphaned_printer_changes(const std::vector<int>& slot
         return true;
     m_activating_printer_slot = true;
     ScopeGuard activating([this]() { m_activating_printer_slot = false; });
+    // The current plate keeps its print meanwhile.
+    SuppressBackgroundProcessingUpdate suppress_update;
     bool ok = true;
     for (const int slot : slots) {
         const PrinterSlot* orphan = partplate_list.printer_slot(slot);
-        if (!ok || slot < 0 || slot == m_active_printer_slot || orphan == nullptr || !orphan->has_changes() ||
-            partplate_list.first_plate_of_slot(slot) >= 0)
+        // Missing presets can be neither loaded nor saved.
+        if (!ok || slot == m_active_printer_slot || orphan == nullptr || !orphan->has_changes() ||
+            partplate_list.first_plate_of_slot(slot) >= 0 || fff_printer_preset(orphan->printer) == nullptr)
             continue;
         switch_printer_slot(slot);
         if (m_active_printer_slot == slot)
@@ -15794,6 +15804,12 @@ void Plater::priv::switch_printer_slot(int slot)
 {
     ScopeGuard refresh_list([this]() { sidebar->update_project_printers(); });
     PresetBundle& bundle = *wxGetApp().preset_bundle;
+    // Keep the active printer if that is missing.
+    if (const PrinterSlot* target = partplate_list.printer_slot(slot);
+        target != nullptr && !target->printer.empty() && fff_printer_preset(target->printer) == nullptr) {
+        show_error(q, format_wxstr(_L("The printer preset \"%1%\" of this plate is not available."), target->printer));
+        return;
+    }
     if (PrinterSlot* leaving = partplate_list.printer_slot(m_active_printer_slot)) {
         leaving->printer   = bundle.printers.get_selected_preset_name();
         leaving->print     = bundle.prints.get_selected_preset_name();
@@ -16627,7 +16643,7 @@ void Plater::priv::undo_redo_to(std::vector<UndoRedo::Snapshot>::const_iterator 
     if (it_snapshot->timestamp < this->undo_redo_stack().active_snapshot_time() ?
         this->undo_redo_stack().undo(model, get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_selection() : this->view3D->get_canvas3d()->get_selection(), get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_gizmos_manager() : this->view3D->get_canvas3d()->get_gizmos_manager(), this->partplate_list, top_snapshot_data, it_snapshot->timestamp) :
         this->undo_redo_stack().redo(model, get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_gizmos_manager() : this->view3D->get_canvas3d()->get_gizmos_manager(), this->partplate_list, it_snapshot->timestamp)) {
-        if (partplate_list.has_printer_beds() || m_active_printer_slot >= 0) {
+        if (partplate_list.has_printer_beds() || m_active_printer_slot >= 0 || !printers_with_plates.empty()) {
             partplate_list.refresh_printer_rows();
             wxGetApp().CallAfter([this, printers_with_plates]() {
                 activate_printer_slot();
