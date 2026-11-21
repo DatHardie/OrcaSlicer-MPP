@@ -37,7 +37,7 @@ The plates of each printer form one row. Without plates for other printers, Orca
 
 - Presets of other printers are stored by name. They must exist where the project is opened.
 - Official OrcaSlicer, or this fork with the option off, opens such a project with all plates on one printer.
-- Printing was tested with simulated Moonraker hosts, not with real printers. Bambu Lab network printing is not adapted.
+- **Print** was tested with one real printer (upload without starting the print), **Print all** only with simulated Moonraker hosts. Bambu Lab network printing is not adapted.
 - Tested on Linux only.
 
 ## Build
