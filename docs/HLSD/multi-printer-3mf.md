@@ -94,15 +94,14 @@ A printer entry:
 ## Saving
 
 - Every 3MF export through `Plater::export_3mf` writes the additions, except exports with
-  `SaveStrategy::SkipModel` (sliced files and files sent to a printer), which contain neither.
-- Minimal published 3MF contain the `printer_slot` keys but not `printer_slots.json`; the keys are
-  then ignored.
-- In sliced files each `plate_N.gcode` is sliced with its plate's printer. In
-  `Metadata/slice_info.config` only `printer_model_id` comes from each plate's printer (from the
-  active printer if that preset is missing). Other values read from the configuration, such as
-  `nozzle_diameters`, `extruder_type`, `nozzle_volume_type`, `timelapse_type` and filament type,
-  colour and ID, come from the printer active when exporting. Filament usage and estimates come
-  from each plate's slicing result.
+  `SaveStrategy::SkipModel` (sliced files and files sent to a printer) and minimal published 3MF,
+  which contain neither.
+- In sliced files each `plate_N.gcode` is sliced with its plate's printer, and
+  `Metadata/slice_info.config` describes each plate with the settings it was sliced with:
+  `printer_model_id` from the plate's printer preset (from the active printer if that preset is
+  missing), and values read from the configuration, such as `nozzle_diameters`, `extruder_type`,
+  `nozzle_volume_type`, `timelapse_type`, filament type, colour and ID, and the object names, from
+  the plate's slicing. Plates of the active printer use the export configuration.
 
 ## Loading
 
