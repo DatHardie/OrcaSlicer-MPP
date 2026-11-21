@@ -15694,16 +15694,20 @@ void Plater::priv::restore_preset_changes(PrinterSlot& slot)
     PresetBundle& bundle = *wxGetApp().preset_bundle;
     auto restore = [](Preset::Type type, PresetCollection& presets, DynamicPrintConfig& changes, const std::string& name) {
         if (changes.empty() || presets.get_selected_preset_name() != name)
-            return;
+            return false;
         Tab* tab = wxGetApp().get_tab(type);
         tab->cache_config_diff(changes.keys(), &changes);
         tab->apply_config_from_cache();
         tab->load_current_preset();
         changes.clear();
+        return true;
     };
-    restore(Preset::TYPE_PRINTER, bundle.printers, slot.printer_changes, slot.printer);
-    restore(Preset::TYPE_PRINT, bundle.prints, slot.print_changes, slot.print);
-    restore(Preset::TYPE_FILAMENT, bundle.filaments, slot.filament_changes, slot.changed_filament);
+    const bool printer_restored = restore(Preset::TYPE_PRINTER, bundle.printers, slot.printer_changes, slot.printer);
+    // Dependent tabs were loaded with the saved printer.
+    if (!restore(Preset::TYPE_PRINT, bundle.prints, slot.print_changes, slot.print) && printer_restored)
+        wxGetApp().get_tab(Preset::TYPE_PRINT)->load_current_preset();
+    if (!restore(Preset::TYPE_FILAMENT, bundle.filaments, slot.filament_changes, slot.changed_filament) && printer_restored)
+        wxGetApp().get_tab(Preset::TYPE_FILAMENT)->load_current_preset();
 }
 
 static const Preset* fff_printer_preset(const std::string& printer);
