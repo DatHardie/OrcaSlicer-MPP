@@ -2038,6 +2038,11 @@ void PreferencesDialog::create_items()
         "multi_printer_projects", _L("(Requires restart)"));
     g_sizer->Add(item_multi_printer);
 
+    auto item_multi_printer_zoom = create_item_checkbox(_L("Zoom to the bed when selecting a plate of another printer"),
+        _L("If enabled, selecting a plate of another printer zooms the view to that printer's bed. Only with multi-printer projects."),
+        "multi_printer_zoom_to_bed");
+    g_sizer->Add(item_multi_printer_zoom);
+
     //// BEHAVIOUR > Preview
     g_sizer->Add(create_item_title(_L("Preview")), 1, wxEXPAND);
 

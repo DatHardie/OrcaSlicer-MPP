@@ -15572,6 +15572,13 @@ void Plater::priv::set_bed_shape(const Pointfs       &shape,
                                  const std::string   &custom_model,
                                  bool                 force_as_custom)
 {
+    // A printer switch keeps the view unless chosen.
+    const bool zoom_requested = camera.requires_zoom_to_bed;
+    ScopeGuard keep_view([this, zoom_requested]() {
+        if ((m_switching_printer_slot || m_activating_printer_slot) &&
+            !wxGetApp().app_config->get_bool("multi_printer_zoom_to_bed"))
+            camera.requires_zoom_to_bed = zoom_requested;
+    });
     //Orca: reduce resolution for large bed printer
     BoundingBoxf bed_size = get_extents(shape);
     if (bed_size.size().maxCoeff() <= LARGE_BED_THRESHOLD)
@@ -16008,7 +16015,9 @@ void Plater::select_printer_plates(int slot)
         select_sliced_plate(plate);
     } else
         select_plate(plate);
-    p->camera.requires_zoom_to_plate = REQUIRES_ZOOM_TO_CUR_PLATE;
+    // Zooms only when chosen in the preferences.
+    if (wxGetApp().app_config->get_bool("multi_printer_zoom_to_bed"))
+        p->camera.requires_zoom_to_plate = REQUIRES_ZOOM_TO_CUR_PLATE;
     get_current_canvas3D()->set_as_dirty();
 }
 
