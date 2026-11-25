@@ -24,13 +24,21 @@ Works now:
 
 The plates of each printer form one row. Without plates for other printers, OrcaSlicer works as before.
 
+Selecting a plate of another printer, also through **Project Printers**, keeps the view. To zoom to its bed instead, turn on **Preferences → Behaviour → Zoom to the bed when selecting a plate of another printer**.
+
+## Separate settings folder
+
+By default this fork uses the same settings folder as OrcaSlicer. To keep them apart:
+
+- Linux: start it with `--datadir ~/.config/OrcaSlicer-MPP`.
+- Windows: create an empty folder `data_dir` next to `orca-slicer.exe`.
+
 ## Pitfalls
 
 - Every printer keeps at least one plate. To drop a printer, remove it under **Project Printers**.
 - Selecting a plate switches the presets. Unsaved changes stay with their printer and mark the project as modified.
 - Removing a printer or rearranging plates discards the slice results of all plates.
 - If undo or redo drops a printer with unsaved changes, it asks until **Save** or **Discard** is chosen.
-- Selecting a plate of another printer zooms to its bed.
 - OrcaSlicer behaviour: saving a filament in the unsaved-changes dialog also sets filament 1 to it, and the print button returns to its default action after a printer change.
 
 ## Limitations
