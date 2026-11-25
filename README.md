@@ -19,12 +19,12 @@ Works now:
 
 ## Use
 
-1. Turn on **Preferences → Behaviour → Multi-printer projects (experimental)** and restart OrcaSlicer. The option is off by default.
+1. In **Preferences**, turn on **Multi-printer projects (experimental)** and restart OrcaSlicer. The option is off by default.
 2. Add a printer under **Project Printers**, or change the **Printer** of a plate in the plate settings. **Project printer** is the normal printer of the project.
 
 The plates of each printer form one row. Without plates for other printers, OrcaSlicer works as before.
 
-Selecting a plate of another printer, also through **Project Printers**, keeps the view. To zoom to its bed instead, turn on **Preferences → Behaviour → Zoom to the bed when selecting a plate of another printer**.
+Selecting a plate of another printer, also through **Project Printers**, keeps the view. To zoom to its bed instead, turn on **Zoom to the bed when selecting a plate of another printer** in **Preferences**.
 
 ## Separate settings folder
 
