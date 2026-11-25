@@ -423,6 +423,8 @@ set(lisbslic3r_sources
     Preset.hpp
     PrincipalComponents2D.cpp
     PrincipalComponents2D.hpp
+    PrinterRowLayout.cpp
+    PrinterRowLayout.hpp
     PublishSettings.cpp
     PublishSettings.hpp
     PrintApply.cpp

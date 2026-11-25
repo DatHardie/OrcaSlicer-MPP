@@ -1727,6 +1727,10 @@ public:
     // the 3MF as Metadata/orca_cad.bin. Empty for non-CAD projects.
     std::string cad_recipe;
 
+    // Printer slots of multi-printer projects as JSON,
+    // round-tripped as Metadata/printer_slots.json. Empty otherwise.
+    std::string printer_slots;
+
     void SetDesigner(std::string designer, std::string designer_user_id) {
         if (design_info == nullptr) {
             design_info = std::make_shared<ModelDesignInfo>();

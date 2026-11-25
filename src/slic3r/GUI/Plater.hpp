@@ -173,6 +173,7 @@ class Sidebar : public wxPanel
     SyncAmsInfoDialog*                      m_sync_dlg{nullptr};
 
     void update_sync_ams_btn_enable(wxUpdateUIEvent &e);
+    void show_add_printer_menu();
 
 public:
     enum DockingState
@@ -206,6 +207,8 @@ public:
     void change_top_border_for_mode_sizer(bool increase_border);
     void update_filaments_area_height();
     void update_filaments_counter(bool force_layout = false);
+    // Rebuilds the project printer list on change.
+    void update_project_printers(bool force = false);
     void msw_rescale();
     void sys_color_changed();
     void search();
@@ -355,6 +358,31 @@ public:
     bool is_presets_dirty() const;
     void set_plater_dirty(bool is_dirty);
     void update_project_dirty_from_presets();
+    // Plates whose results depend on the presets.
+    void invalidate_plates_for_presets(Preset::Type type);
+    // Offers each other printer's unsaved changes.
+    bool check_printer_slot_changes(const wxString& caption, const wxString& header);
+    // Option value at startup.
+    bool multi_printer_enabled() const;
+    // Some plates use their own printer.
+    bool has_plate_printers() const;
+    // A printer of the project and its plates.
+    struct ProjectPrinter
+    {
+        int         slot{-1};
+        std::string printer;
+        int         plates{0};
+        int         sliced{0};
+        bool        active{false};
+        bool        operator==(const ProjectPrinter& other) const;
+    };
+    // Project printer first, then plate order.
+    std::vector<ProjectPrinter> project_printers() const;
+    // New plate for the printer, -1 on failure.
+    int  add_printer_plate(const std::string& printer);
+    // Its plates go back to the project printer.
+    bool remove_printer(int slot);
+    void select_printer_plates(int slot);
     void normalize_bed_types(bool printer_setting_changed);
     int  save_project_if_dirty(const wxString& reason);
     void reset_project_dirty_after_save();
@@ -792,6 +820,8 @@ public:
     bool can_add_model() const;
     bool can_add_plate() const;
     bool can_delete_plate() const;
+    // Each printer keeps at least one plate.
+    bool can_delete_curr_plate() const;
     // Undoable rename; use for user edits instead of PartPlate::set_plate_name().
     void rename_plate(int plate_index, const std::string& name);
     bool can_increase_instances() const;

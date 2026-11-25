@@ -10,6 +10,7 @@
 #include "libslic3r/Format/3mf.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/GCode/ThumbnailData.hpp"
+#include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/Format/STL.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/miniz_extension.hpp"
@@ -521,6 +522,157 @@ TEST_CASE("A plate's G-code statistics are stored next to its G-code", "[3mf]")
     CHECK(read_cad_recipe_entry(path, stored, "Metadata/plate_1.statistics.json") == with_statistics);
     if (with_statistics)
         CHECK(stored == plate.statistics);
+}
+
+TEST_CASE("Plate printers and printer slots survive a project round trip", "[3mf]")
+{
+    const bool with_slots = GENERATE(false, true);
+    Model        model;
+    ModelObject* object = model.add_object();
+    object->add_volume(make_cube(10., 10., 10.));
+    object->add_instance();
+    ScopedTemporaryDir backup_dir("orca_printer_slots_src");
+    model.set_backup_path(backup_dir.string());
+    const std::string slots = R"({"version": 1, "slots": []})";
+    if (with_slots)
+        model.printer_slots = slots;
+
+    DynamicPrintConfig cfg = DynamicPrintConfig::full_print_config();
+    PlateData          first, second;
+    first.plate_index   = 0;
+    second.plate_index  = 1;
+    second.printer_slot = with_slots ? 0 : -1;
+    ScopedTemporaryFile file(".3mf");
+    const std::string   path = file.string();
+    StoreParams         sp;
+    sp.path     = path.c_str();
+    sp.model    = &model;
+    sp.config   = &cfg;
+    sp.strategy = SaveStrategy::Zip64 | SaveStrategy::Silence;
+    sp.plate_data_list.push_back(&first);
+    sp.plate_data_list.push_back(&second);
+    REQUIRE(store_bbs_3mf(sp));
+
+    std::string stored;
+    CHECK(read_cad_recipe_entry(path, stored, "Metadata/printer_slots.json") == with_slots);
+    REQUIRE(read_cad_recipe_entry(path, stored, "Metadata/model_settings.config"));
+    // Projects without own printers keep the old keys.
+    CHECK((stored.find("printer_slot") != std::string::npos) == with_slots);
+
+    LoadStrategy strategy = GENERATE(LoadStrategy::LoadModel | LoadStrategy::LoadConfig, LoadStrategy::LoadModel);
+    Model                     loaded;
+    ScopedTemporaryDir        load_dir("orca_printer_slots_dst");
+    loaded.set_backup_path(load_dir.string());
+    DynamicPrintConfig        config;
+    ConfigSubstitutionContext ctxt{ForwardCompatibilitySubstitutionRule::Enable};
+    PlateDataPtrs             plates;
+    std::vector<Preset*>      project_presets;
+    bool                      is_bbl_3mf = false, is_orca_3mf = false;
+    Semver                    file_version;
+    REQUIRE(load_bbs_3mf(path.c_str(), &config, &ctxt, &loaded, &plates, &project_presets, &is_bbl_3mf, &is_orca_3mf,
+                         &file_version, nullptr, strategy));
+    REQUIRE(plates.size() == 2);
+    CHECK(plates[0]->printer_slot == -1);
+    CHECK(plates[1]->printer_slot == (with_slots ? 0 : -1));
+    // Slots load only together with the config.
+    const bool slots_loaded = with_slots && (strategy & LoadStrategy::LoadConfig);
+    CHECK(loaded.printer_slots == (slots_loaded ? slots : std::string()));
+    release_PlateData_list(plates);
+}
+
+TEST_CASE("A published 3MF carries no printer slots", "[3mf]")
+{
+    const bool   published = GENERATE(false, true);
+    Model        model;
+    ModelObject* object = model.add_object();
+    object->add_volume(make_cube(10., 10., 10.));
+    object->add_instance();
+    ScopedTemporaryDir backup_dir("orca_published_slots");
+    model.set_backup_path(backup_dir.string());
+    model.printer_slots = R"({"version": 1, "slots": []})";
+
+    DynamicPrintConfig cfg = DynamicPrintConfig::full_print_config();
+    PlateData          first, second;
+    first.plate_index   = 0;
+    second.plate_index  = 1;
+    second.printer_slot = 0;
+    ScopedTemporaryFile file(".3mf");
+    const std::string   path = file.string();
+    StoreParams         sp;
+    sp.path     = path.c_str();
+    sp.model    = &model;
+    sp.config   = &cfg;
+    sp.strategy = SaveStrategy::Zip64 | SaveStrategy::Silence;
+    if (published)
+        sp.strategy = sp.strategy | SaveStrategy::MinimalPublished;
+    sp.plate_data_list.push_back(&first);
+    sp.plate_data_list.push_back(&second);
+    REQUIRE(store_bbs_3mf(sp));
+
+    std::string stored;
+    CHECK(read_cad_recipe_entry(path, stored, "Metadata/printer_slots.json") == !published);
+    REQUIRE(read_cad_recipe_entry(path, stored, "Metadata/model_settings.config"));
+    // Key and slots file are dropped together.
+    CHECK((stored.find("printer_slot") != std::string::npos) == !published);
+}
+
+TEST_CASE("Sliced plates of other printers keep their printer's slice info", "[3mf]")
+{
+    const bool own_config = GENERATE(false, true);
+    ScopedTemporaryFile gcode(".gcode");
+    save_string_file(gcode.path(), "G1 X10 Y10 E1\n");
+
+    Model        model;
+    ModelObject* object = model.add_object();
+    object->add_volume(make_cube(10., 10., 10.));
+    object->add_instance();
+    ScopedTemporaryDir backup_dir("orca_plate_slice_info");
+    model.set_backup_path(backup_dir.string());
+    object->name = "Cube";
+    // The active printer is a Bambu Lab one.
+    const bool bbl                 = GCodeProcessor::s_IsBBLPrinter;
+    GCodeProcessor::s_IsBBLPrinter = true;
+    ScopeGuard restore_bbl([bbl]() { GCodeProcessor::s_IsBBLPrinter = bbl; });
+
+    DynamicPrintConfig cfg = DynamicPrintConfig::full_print_config();
+    cfg.set_key_value("nozzle_diameter", new ConfigOptionFloats{0.4});
+    cfg.set_key_value("gcode_flavor", new ConfigOptionEnum<GCodeFlavor>(gcfKlipper));
+    PlateData first, second;
+    for (PlateData* plate : {&first, &second}) {
+        plate->gcode_file            = gcode.string();
+        plate->is_sliced_valid       = true;
+        plate->objects_and_instances = {{0, 0}};
+    }
+    first.plate_index  = 0;
+    second.plate_index = 1;
+    if (own_config) {
+        DynamicPrintConfig own = cfg;
+        own.set_key_value("nozzle_diameter", new ConfigOptionFloats{0.2});
+        second.slice_config = std::move(own);
+        second.bbl_printer  = false;
+    }
+    ScopedTemporaryFile file(".3mf");
+    const std::string   path = file.string();
+    StoreParams         sp;
+    sp.path     = path.c_str();
+    sp.model    = &model;
+    sp.config   = &cfg;
+    sp.strategy = SaveStrategy::Zip64 | SaveStrategy::Silence | SaveStrategy::WithGcode;
+    sp.plate_data_list.push_back(&first);
+    sp.plate_data_list.push_back(&second);
+    REQUIRE(store_bbs_3mf(sp));
+
+    std::string stored;
+    REQUIRE(read_cad_recipe_entry(path, stored, "Metadata/slice_info.config"));
+    const size_t second_plate = stored.find("<plate>", stored.find("<plate>") + 1);
+    REQUIRE(second_plate != std::string::npos);
+    const std::string first_text = stored.substr(0, second_plate);
+    const std::string nozzle     = R"(key="nozzle_diameters" value=")";
+    CHECK(first_text.find(nozzle + "0.4\"") != std::string::npos);
+    CHECK(stored.find(nozzle + (own_config ? "0.2\"" : "0.4\""), second_plate) != std::string::npos);
+    // Klipper plates name objects as in their G-code.
+    CHECK(first_text.find(R"(name="Cube")") != std::string::npos);
+    CHECK(stored.find(own_config ? R"(name="Cube_id_0_copy_0")" : R"(name="Cube")", second_plate) != std::string::npos);
 }
 
 TEST_CASE("A project with a plate id below 1 fails to load", "[3mf][Regression]")

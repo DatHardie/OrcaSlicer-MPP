@@ -7,6 +7,7 @@
 #include <boost/lexical_cast.hpp>
 #include <cstddef>
 #include <algorithm>
+#include <limits>
 #include "libslic3r/Color.hpp"
 #include "libslic3r/Point.hpp"
 #include "libslic3r/Config.hpp"
@@ -17,6 +18,7 @@
 #include <functional>
 #include <iterator>
 #include "libslic3r/BuildVolume.hpp"
+#include "libslic3r/PrinterRowLayout.hpp"
 #include "libslic3r/GCode/WipeTower.hpp"
 #include "libslic3r/CustomGCode.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
@@ -6037,6 +6039,10 @@ Vec3d PartPlateList::compute_origin_using_new_size(int i, int new_width, int new
 //compute the origin for printable plate with index i
 Vec3d PartPlateList::compute_origin_for_unprintable()
 {
+	if (has_printer_beds()) {
+		const Vec2d pos = printer_row_position(-1);
+		return Vec3d(pos.x(), pos.y(), 0.);
+	}
 	int max_count = m_plate_cols * m_plate_cols;
 	if (m_plate_count == max_count)
 		return compute_origin(max_count + m_plate_cols - 1, m_plate_cols + 1);
@@ -6047,6 +6053,9 @@ Vec3d PartPlateList::compute_origin_for_unprintable()
 //compute shape position
 Vec2d PartPlateList::compute_shape_position(int index, int cols)
 {
+	if (has_printer_beds())
+		return printer_row_position(index);
+
 	Vec2d pos;
 	int row, col;
 
@@ -6590,7 +6599,8 @@ int PartPlateList::create_plate(bool adjust_position)
 	int cols = compute_colum_count(new_index + 1);
 	int old_cols = compute_colum_count(new_index);
 	// Orca: Rebuild plate membership before moving instances during a grid reflow.
-	if (adjust_position && old_cols != cols)
+	const bool rows = has_printer_beds();
+	if (adjust_position && (old_cols != cols || rows))
 		reload_all_objects();
 
 	origin = compute_origin(new_index, cols);
@@ -6608,13 +6618,15 @@ int PartPlateList::create_plate(bool adjust_position)
 	}
 
 	plate->set_filament_count(m_filament_count);
+	if (m_new_plate_bed.assigned())
+		plate->m_printer_bed = m_new_plate_bed;
 
 	plate->set_index(new_index);
 	Vec2d pos = compute_shape_position(new_index, cols);
 	plate->set_shape(m_shape, m_exclude_areas, m_extruder_areas, m_extruder_heights, pos, m_height_to_lid, m_height_to_rod);
 	m_plate_list.emplace_back(plate);
 	update_plate_cols();
-	if (old_cols != cols)
+	if (old_cols != cols || rows)
 	{
 		BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(":old_cols %1% -> new_cols %2%") % old_cols % cols;
 		//update the origin of each plate
@@ -6673,6 +6685,9 @@ int PartPlateList::duplicate_plate(int index)
     PartPlate* new_plate = NULL;
     old_plate = get_plate(index);
     new_plate = get_plate(new_plate_index);
+    // The copy keeps the printer.
+    if (old_plate->m_printer_bed.assigned())
+        set_plate_printer_bed(new_plate_index, old_plate->m_printer_bed);
 
     // get the offset between plate centers
     Vec3d plate_to_plate_offset = new_plate->m_origin - old_plate->m_origin;
@@ -6752,6 +6767,11 @@ int PartPlateList::delete_plate(int index)
 		BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(":only one plate left, can not delete");
 		return -1;
 	}
+	if (!can_delete_plate(index))
+	{
+		BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(":last plate of its printer, can not delete");
+		return -1;
+	}
 
 	plate = m_plate_list[index];
 	if (index != plate->get_index())
@@ -6778,6 +6798,7 @@ int PartPlateList::delete_plate(int index)
 
 	int cols = compute_colum_count(m_plate_list.size() - 1);
 	int old_cols = compute_colum_count(m_plate_list.size());
+	const bool had_rows = has_printer_beds();
 
 	m_plate_list.erase(m_plate_list.begin() + index);
 	update_plate_cols();
@@ -6785,7 +6806,7 @@ int PartPlateList::delete_plate(int index)
 	//move this plate's instance to the end
 	Vec3d current_origin;
 	current_origin = compute_origin_for_unprintable();
-	plate->set_pos_and_size(current_origin, m_plate_width, m_plate_depth, m_plate_height, true);
+	plate->set_pos_and_size(current_origin, plate_bed_width(*plate), plate_bed_depth(*plate), plate_bed_height(*plate), true);
 
 	//update the plates after it
 	for (unsigned int i = index; i < (unsigned int)m_plate_list.size(); ++i)
@@ -6795,11 +6816,11 @@ int PartPlateList::delete_plate(int index)
 
 		plate->set_index(i);
 		Vec3d origin = compute_origin(i, m_plate_cols);
-		plate->set_pos_and_size(origin, m_plate_width, m_plate_depth, m_plate_height, true);
+		plate->set_pos_and_size(origin, plate_bed_width(*plate), plate_bed_depth(*plate), plate_bed_height(*plate), true);
 
 		//update render shapes
 		Vec2d pos = compute_shape_position(i, m_plate_cols);
-		plate->set_shape(m_shape, m_exclude_areas, m_extruder_areas, m_extruder_heights, pos, m_height_to_lid, m_height_to_rod);
+		set_plate_shape(*plate, pos);
 	}
 
 	//update current_plate if delete current
@@ -6818,7 +6839,7 @@ int PartPlateList::delete_plate(int index)
 
 	unprintable_plate.set_index(m_plate_list.size());
 
-	if (old_cols != cols)
+	if (old_cols != cols || had_rows)
 	{
 		//update the origin of each plate
 		update_all_plates_pos_and_size();
@@ -7058,6 +7079,208 @@ double PartPlateList::plate_stride_y()
 	return m_plate_depth * (1. + LOGICAL_PART_PLATE_GAP);
 }
 
+bool PartPlateList::has_printer_beds() const
+{
+	return std::any_of(m_plate_list.begin(), m_plate_list.end(),
+		[](const PartPlate* plate) { return plate->m_printer_bed.assigned(); });
+}
+
+int PartPlateList::plate_bed_width(const PartPlate& plate) const
+{
+	if (!plate.m_printer_bed.assigned())
+		return m_plate_width;
+	return int(BoundingBoxf(plate.m_printer_bed.shape).size().x());
+}
+
+int PartPlateList::plate_bed_depth(const PartPlate& plate) const
+{
+	if (!plate.m_printer_bed.assigned())
+		return m_plate_depth;
+	return int(BoundingBoxf(plate.m_printer_bed.shape).size().y());
+}
+
+double PartPlateList::plate_bed_height(const PartPlate& plate) const
+{
+	return plate.m_printer_bed.assigned() ? plate.m_printer_bed.height : m_plate_height;
+}
+
+// Index -1 is a new row below all.
+Vec2d PartPlateList::printer_row_position(int index) const
+{
+	const Vec2d project_size(std::max(1, m_plate_width), std::max(1, m_plate_depth));
+	std::vector<RowLayoutPlate> plates;
+	for (const PartPlate* plate : m_plate_list) {
+		const bool own = plate->m_printer_bed.assigned();
+		plates.push_back({plate->m_printer_bed.slot,
+			own ? Vec2d(std::max(1, plate_bed_width(*plate)), std::max(1, plate_bed_depth(*plate))) : project_size});
+	}
+	// Indices past the end are new plates.
+	while (int(plates.size()) <= index)
+		plates.push_back({-1, project_size});
+	if (index < 0) {
+		plates.push_back({std::numeric_limits<int>::min(), project_size});
+		index = int(plates.size()) - 1;
+	}
+	return printer_row_offsets(plates, LOGICAL_PART_PLATE_GAP)[index];
+}
+
+void PartPlateList::set_plate_shape(PartPlate& plate, const Vec2d& pos)
+{
+	const PlatePrinterBed& bed = plate.m_printer_bed;
+	if (bed.assigned())
+		plate.set_shape(bed.shape, bed.exclude_areas, bed.extruder_areas, bed.extruder_heights, pos, bed.height_to_lid, bed.height_to_rod);
+	else
+		plate.set_shape(m_shape, m_exclude_areas, m_extruder_areas, m_extruder_heights, pos, m_height_to_lid, m_height_to_rod);
+}
+
+bool PartPlateList::valid_printer_bed(const PlatePrinterBed& bed)
+{
+	const bool finite = std::all_of(bed.shape.begin(), bed.shape.end(), [](const Vec2d& p) { return p.allFinite(); });
+	if (bed.shape.size() < 3 || !finite || !std::isfinite(bed.height) || bed.height <= 0.)
+		return false;
+	const Vec2d size = BoundingBoxf(bed.shape).size();
+	return size.x() >= 1. && size.y() >= 1.;
+}
+
+void PartPlateList::apply_printer_beds(bool move_instances)
+{
+	update_all_plates_pos_and_size(move_instances, move_instances);
+	set_shapes(m_shape, m_exclude_areas, m_wrapping_exclude_areas, m_extruder_areas, m_extruder_heights, m_logo_texture_filename, m_height_to_lid, m_height_to_rod);
+	if (m_plater) {
+		Vec2d pos = compute_shape_position(m_current_plate, m_plate_cols);
+		m_plater->set_bed_position(pos);
+	}
+}
+
+bool PartPlateList::set_plate_printer_bed(int index, PlatePrinterBed bed)
+{
+	if (index < 0 || index >= int(m_plate_list.size()))
+		return false;
+	if (bed.assigned() && (bed.slot >= int(m_printer_slots.size()) || !valid_printer_bed(bed)))
+		return false;
+	if (!bed.assigned())
+		bed = PlatePrinterBed{};
+
+	reload_all_objects();
+	m_plate_list[index]->m_printer_bed = std::move(bed);
+	apply_printer_beds(true);
+	return true;
+}
+
+bool PartPlateList::set_slot_printer_bed(int slot, PlatePrinterBed bed)
+{
+	if (slot < 0 || slot >= int(m_printer_slots.size()))
+		return false;
+	bed.slot = slot;
+	if (!valid_printer_bed(bed))
+		return false;
+
+	// Only shape or height move plates.
+	bool changed = false, moved = false;
+	for (const PartPlate* plate : m_plate_list) {
+		const PlatePrinterBed& old_bed = plate->m_printer_bed;
+		if (old_bed.slot != slot || old_bed == bed)
+			continue;
+		changed = true;
+		moved |= old_bed.shape != bed.shape || old_bed.height != bed.height;
+	}
+	if (!changed)
+		return true;
+	if (moved)
+		reload_all_objects();
+	for (PartPlate* plate : m_plate_list)
+		if (plate->m_printer_bed.slot == slot) {
+			plate->m_printer_bed = bed;
+			if (!moved)
+				set_plate_shape(*plate, compute_shape_position(plate->get_index(), m_plate_cols));
+		}
+	if (moved)
+		apply_printer_beds(true);
+	return true;
+}
+
+void PartPlateList::refresh_printer_rows()
+{
+	apply_printer_beds(false);
+}
+
+// Undo resets plates but keeps slots.
+void PartPlateList::clear_printer_slots()
+{
+	m_printer_slots.clear();
+	m_project_printer = PrinterSlot{};
+}
+
+void PartPlateList::set_printer_slots(std::vector<PrinterSlot> slots, PrinterSlot project_printer)
+{
+	m_printer_slots   = std::move(slots);
+	m_project_printer = std::move(project_printer);
+}
+
+int PartPlateList::first_plate_of_slot(int slot) const
+{
+	for (size_t i = 0; i < m_plate_list.size(); ++i)
+		if (m_plate_list[i]->m_printer_bed.slot == slot)
+			return int(i);
+	return -1;
+}
+
+int PartPlateList::plate_count_of_slot(int slot) const
+{
+	return int(std::count_if(m_plate_list.begin(), m_plate_list.end(),
+		[slot](const PartPlate* plate) { return plate->m_printer_bed.slot == slot; }));
+}
+
+bool PartPlateList::can_delete_plate(int index) const
+{
+	return index >= 0 && index < int(m_plate_list.size()) && m_plate_list.size() > 1 &&
+	       plate_count_of_slot(m_plate_list[index]->m_printer_bed.slot) > 1;
+}
+
+bool PartPlateList::clear_slot_printer_beds(int slot)
+{
+	if (slot < 0 || first_plate_of_slot(slot) < 0)
+		return false;
+	reload_all_objects();
+	for (PartPlate* plate : m_plate_list)
+		if (plate->m_printer_bed.slot == slot)
+			plate->m_printer_bed = PlatePrinterBed{};
+	apply_printer_beds(true);
+	return true;
+}
+
+void PartPlateList::load_printer_beds(std::vector<PlatePrinterBed> beds)
+{
+	beds.resize(m_plate_list.size());
+	for (size_t i = 0; i < m_plate_list.size(); ++i) {
+		PlatePrinterBed& bed = beds[i];
+		if (bed.assigned() && (bed.slot >= int(m_printer_slots.size()) || !valid_printer_bed(bed)))
+			bed = PlatePrinterBed{};
+		m_plate_list[i]->m_printer_bed = std::move(bed);
+	}
+	apply_printer_beds(false);
+}
+
+PrinterSlot* PartPlateList::printer_slot(int slot)
+{
+	if (slot == -1)
+		return &m_project_printer;
+	if (slot < 0 || slot >= int(m_printer_slots.size()))
+		return nullptr;
+	return &m_printer_slots[slot];
+}
+
+int PartPlateList::find_or_add_printer_slot(const std::string& printer)
+{
+	if (printer.empty())
+		return -1;
+	for (size_t i = 0; i < m_printer_slots.size(); ++i)
+		if (m_printer_slots[i].printer == printer)
+			return int(i);
+	m_printer_slots.push_back({printer, {}});
+	return int(m_printer_slots.size()) - 1;
+}
+
 //get the plate counts, not including the invalid plate
 int PartPlateList::get_plate_count() const
 {
@@ -7094,7 +7317,7 @@ void PartPlateList::update_all_plates_pos_and_size(bool adjust_position, bool wi
 
 		//compute origin1 for PartPlate
 		origin1 = compute_origin(i, m_plate_cols);
-		plate->set_pos_and_size(origin1, m_plate_width, m_plate_depth, m_plate_height, adjust_position, do_clear);
+		plate->set_pos_and_size(origin1, plate_bed_width(*plate), plate_bed_depth(*plate), plate_bed_height(*plate), adjust_position, do_clear);
 
 		// set default wipe pos when switch plate
         if (switch_plate_type && m_plater/* && plate->get_used_extruders().size() <= 0*/) {
@@ -7139,12 +7362,15 @@ int PartPlateList::move_plate_to_index(int old_index, int new_index)
 		m_plate_list[i]->set_index(i);
 
 		origin = compute_origin(i, m_plate_cols);
-		m_plate_list[i]->set_pos_and_size(origin, m_plate_width, m_plate_depth, m_plate_height, true);
+		m_plate_list[i]->set_pos_and_size(origin, plate_bed_width(*m_plate_list[i]), plate_bed_depth(*m_plate_list[i]), plate_bed_height(*m_plate_list[i]), true);
 	}
-	origin = compute_origin(new_index, m_plate_cols);
 	m_plate_list[new_index] = plate;
 	plate->set_index(new_index);
-	plate->set_pos_and_size(origin, m_plate_width, m_plate_depth, m_plate_height, true);
+	origin = compute_origin(new_index, m_plate_cols);
+	plate->set_pos_and_size(origin, plate_bed_width(*plate), plate_bed_depth(*plate), plate_bed_height(*plate), true);
+	// Rows may shift other plates too.
+	if (has_printer_beds())
+		update_all_plates_pos_and_size(true, true);
 
 	//update the new plate index
 	m_current_plate = new_index;
@@ -7625,8 +7851,9 @@ bool PartPlateList::preprocess_arrange_polygon(int obj_index, int instance_index
 				arrange_polygon.bed_idx = i;
 				arrange_polygon.row = i / m_plate_cols;
 				arrange_polygon.col = i % m_plate_cols;
-				arrange_polygon.translation(X) -= scaled<double>(plate_stride_x() * arrange_polygon.col);
-				arrange_polygon.translation(Y) += scaled<double>(plate_stride_y() * arrange_polygon.row);
+				const Vec2d pos = compute_shape_position(i, m_plate_cols);
+				arrange_polygon.translation(X) -= scaled<double>(pos.x());
+				arrange_polygon.translation(Y) -= scaled<double>(pos.y());
 			}
 			else
 			{
@@ -7636,8 +7863,9 @@ bool PartPlateList::preprocess_arrange_polygon(int obj_index, int instance_index
 					arrange_polygon.bed_idx = i - lockplate_cnt;
 					arrange_polygon.row = i / m_plate_cols;
 					arrange_polygon.col = i % m_plate_cols;
-					arrange_polygon.translation(X) -= scaled<double>(plate_stride_x() * arrange_polygon.col);
-					arrange_polygon.translation(Y) += scaled<double>(plate_stride_y() * arrange_polygon.row);
+					const Vec2d pos = compute_shape_position(i, m_plate_cols);
+					arrange_polygon.translation(X) -= scaled<double>(pos.x());
+					arrange_polygon.translation(Y) -= scaled<double>(pos.y());
 				}
 			}
 			BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": obj_id %1% instance_id %2% already in plate %3%, locked %4%, row %5%, col %6%\n") % obj_index % instance_index % i % locked % arrange_polygon.row % arrange_polygon.col;
@@ -7674,8 +7902,9 @@ bool PartPlateList::preprocess_arrange_polygon_other_locked(int obj_index, int i
 				arrange_polygon.bed_idx = i;
 				arrange_polygon.row = i / m_plate_cols;
 				arrange_polygon.col = i % m_plate_cols;
-				arrange_polygon.translation(X) -= scaled<double>(plate_stride_x() * arrange_polygon.col);
-				arrange_polygon.translation(Y) += scaled<double>(plate_stride_y() * arrange_polygon.row);
+				const Vec2d pos = compute_shape_position(i, m_plate_cols);
+				arrange_polygon.translation(X) -= scaled<double>(pos.x());
+				arrange_polygon.translation(Y) -= scaled<double>(pos.y());
 				//BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": obj_id %1% instance_id %2% in plate %3%, locked %4%, row %5%, col %6%\n") % obj_index % instance_index % i % locked % arrange_polygon.row % arrange_polygon.col;
 				return locked;
 			}
@@ -7938,8 +8167,9 @@ void PartPlateList::postprocess_arrange_polygon(arrangement::ArrangePolygon& arr
 	{
 		arrange_polygon.row = arrange_polygon.bed_idx / m_plate_cols;
 		arrange_polygon.col = arrange_polygon.bed_idx % m_plate_cols;
-		arrange_polygon.translation(X) += scaled<double>(plate_stride_x() * arrange_polygon.col);
-		arrange_polygon.translation(Y) -= scaled<double>(plate_stride_y() * arrange_polygon.row);
+		const Vec2d pos = compute_shape_position(arrange_polygon.bed_idx, m_plate_cols);
+		arrange_polygon.translation(X) += scaled<double>(pos.x());
+		arrange_polygon.translation(Y) += scaled<double>(pos.y());
 	}
 
 	return;
@@ -8097,7 +8327,7 @@ bool PartPlateList::set_shapes(const Pointfs              &shape,
 		Vec2d pos;
 
 		pos = compute_shape_position(i, m_plate_cols);
-		plate->set_shape(shape, exclude_areas, extruder_areas, extruder_heights, pos, height_to_lid, height_to_rod);
+		set_plate_shape(*plate, pos);
 	}
 	is_load_bedtype_textures = false; //reload textures
     is_load_extruder_only_area_textures = false; // reload textures
@@ -8713,7 +8943,7 @@ int PartPlateList::load_gcode_files()
 			//BoundingBoxf3   print_volume = m_plate_list[i]->get_bounding_box(false);
 			//print_volume.max(2) = this->m_plate_height;
 			//print_volume.min(2) = -1e10;
-			m_model->update_print_volume_state({m_plate_list[i]->get_shape(), this->m_plate_height, m_plate_list[i]->get_extruder_areas(), m_plate_list[i]->get_extruder_heights() });
+			m_model->update_print_volume_state({m_plate_list[i]->get_shape(), plate_bed_height(*m_plate_list[i]), m_plate_list[i]->get_extruder_areas(), m_plate_list[i]->get_extruder_heights() });
 
 			if (!m_plate_list[i]->load_gcode_from_file(m_plate_list[i]->m_gcode_path_from_3mf))
 				ret ++;
@@ -9231,6 +9461,146 @@ void PartPlateList::on_filament_deleted(int filament_count, int filament_id)
         m_plate_list[i]->on_filament_deleted(filament_count, filament_id);
     }
     BOOST_LOG_TRIVIAL(info) << boost::format("%1%: filament_count=%2%, filament_id=%3%")% __FUNCTION__ %filament_count %filament_id;
+}
+
+namespace {
+
+constexpr int printer_slots_version = 1;
+
+nlohmann::json config_to_json(const DynamicPrintConfig& config)
+{
+	nlohmann::json out = nlohmann::json::object();
+	for (const std::string& key : config.keys())
+		out[key] = config.option(key)->serialize();
+	return out;
+}
+
+// Unknown keys are dropped like in project files.
+bool config_from_json(const nlohmann::json& in, DynamicPrintConfig& config)
+{
+	if (!in.is_object())
+		return false;
+	std::map<std::string, std::string> values;
+	for (auto it = in.begin(); it != in.end(); ++it) {
+		if (!it.value().is_string())
+			return false;
+		values[it.key()] = it.value().get<std::string>();
+	}
+	try {
+		config.load_string_map(values, ForwardCompatibilitySubstitutionRule::EnableSilent);
+	} catch (const std::exception&) {
+		return false;
+	}
+	return true;
+}
+
+nlohmann::json slot_to_json(const PrinterSlot& slot)
+{
+	return {{"printer", slot.printer},
+	        {"print", slot.print},
+	        {"filaments", slot.filaments},
+	        {"changed_filament", slot.changed_filament},
+	        {"printer_changes", config_to_json(slot.printer_changes)},
+	        {"print_changes", config_to_json(slot.print_changes)},
+	        {"filament_changes", config_to_json(slot.filament_changes)}};
+}
+
+bool slot_from_json(const nlohmann::json& in, PrinterSlot& slot)
+{
+	if (!in.is_object())
+		return false;
+	auto text = [&in](const char* key, std::string& value) {
+		auto it = in.find(key);
+		if (it == in.end() || !it->is_string())
+			return false;
+		value = it->get<std::string>();
+		return true;
+	};
+	auto filaments = in.find("filaments");
+	if (!text("printer", slot.printer) || !text("print", slot.print) || !text("changed_filament", slot.changed_filament) ||
+	    filaments == in.end() || !filaments->is_array())
+		return false;
+	for (const nlohmann::json& name : *filaments) {
+		if (!name.is_string())
+			return false;
+		slot.filaments.push_back(name.get<std::string>());
+	}
+	return config_from_json(in.value("printer_changes", nlohmann::json::object()), slot.printer_changes) &&
+	       config_from_json(in.value("print_changes", nlohmann::json::object()), slot.print_changes) &&
+	       config_from_json(in.value("filament_changes", nlohmann::json::object()), slot.filament_changes);
+}
+
+} // namespace
+
+std::optional<PrinterSlotsData> select_saved_printer_slots(const std::vector<PrinterSlot>& slots,
+                                                           const std::vector<int>&         plate_slots,
+                                                           int                             active_slot,
+                                                           std::vector<int>&               plate_saved_index)
+{
+	plate_saved_index.assign(plate_slots.size(), -1);
+	const bool own_plates   = std::any_of(plate_slots.begin(), plate_slots.end(), [](int slot) { return slot >= 0; });
+	const bool kept_changes = std::any_of(slots.begin(), slots.end(), [](const PrinterSlot& slot) { return slot.has_changes(); });
+	if (!own_plates && active_slot < 0 && !kept_changes)
+		return std::nullopt;
+
+	PrinterSlotsData   data;
+	std::map<int, int> saved_index;
+	for (size_t i = 0; i < plate_slots.size(); ++i) {
+		const int slot = plate_slots[i];
+		if (slot < 0 || slot >= int(slots.size()))
+			continue;
+		auto [it, added] = saved_index.try_emplace(slot, int(data.slots.size()));
+		if (added)
+			data.slots.push_back(slots[slot]);
+		plate_saved_index[i] = it->second;
+	}
+	// Plate-less slots keep their unsaved changes.
+	for (int slot = 0; slot < int(slots.size()); ++slot)
+		if (saved_index.count(slot) == 0 && slot != active_slot && slots[slot].has_changes())
+			data.slots.push_back(slots[slot]);
+	if (auto it = saved_index.find(active_slot); it != saved_index.end())
+		data.active_slot = it->second;
+	return data;
+}
+
+std::string printer_slots_to_json(const PrinterSlotsData& data)
+{
+	nlohmann::json slots = nlohmann::json::array();
+	for (const PrinterSlot& slot : data.slots)
+		slots.push_back(slot_to_json(slot));
+	nlohmann::json out = {{"version", printer_slots_version},
+	                      {"active_slot", data.active_slot},
+	                      {"project_printer", slot_to_json(data.project_printer)},
+	                      {"slots", slots}};
+	return out.dump(1);
+}
+
+bool printer_slots_from_json(const std::string& json, PrinterSlotsData& data)
+{
+	const nlohmann::json in = nlohmann::json::parse(json, nullptr, false);
+	if (!in.is_object())
+		return false;
+	auto version = in.find("version");
+	if (version == in.end() || !version->is_number_integer() || version->get<int>() != printer_slots_version)
+		return false;
+	PrinterSlotsData loaded;
+	auto active = in.find("active_slot");
+	auto slots  = in.find("slots");
+	auto project = in.find("project_printer");
+	if (active == in.end() || !active->is_number_integer() || slots == in.end() || !slots->is_array() ||
+	    project == in.end() || !slot_from_json(*project, loaded.project_printer))
+		return false;
+	for (const nlohmann::json& item : *slots) {
+		PrinterSlot slot;
+		if (!slot_from_json(item, slot) || slot.printer.empty())
+			return false;
+		loaded.slots.push_back(std::move(slot));
+	}
+	loaded.active_slot = active->get<int>();
+	if (loaded.active_slot < -1 || loaded.active_slot >= int(loaded.slots.size()))
+		return false;
+	data = std::move(loaded);
+	return true;
 }
 
 }//end namespace GUI

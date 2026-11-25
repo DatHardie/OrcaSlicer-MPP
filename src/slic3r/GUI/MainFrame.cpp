@@ -701,9 +701,11 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
         //    event.Veto();
         //    return;
         //}
-        auto check = [](bool yes_or_no) {
+        auto check = [this](bool yes_or_no) {
             if (yes_or_no)
                 return true;
+            if (!m_plater->check_printer_slot_changes(_L("Closing application"), _L("Closing Application while some presets are modified.")))
+                return false;
             return wxGetApp().check_and_save_current_preset_changes(_L("Closing application"), _L("Closing Application while some presets are modified."));
         };
 
@@ -2231,6 +2233,9 @@ std::vector<MainFrame::PrintSelectType> MainFrame::available_print_actions() con
     if (preset_bundle && !preset_bundle->is_bbl_vendor() && !use_printer_agents) {
         // ThirdParty actions
         actions.push_back(eSendGcode);
+        // Multi-printer projects: each plate to its printer.
+        if (m_plater != nullptr && m_plater->has_plate_printers())
+            actions.push_back(ePrintAll);
         // Orca: when the printer accepts a .gcode.3mf (the "Support 3MF as gcode" option),
         // also offer exporting the sliced .gcode.3mf bundle
         const auto* use_3mf_opt = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionBool>("use_3mf");

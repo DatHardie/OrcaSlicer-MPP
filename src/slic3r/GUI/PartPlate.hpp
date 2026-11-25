@@ -17,6 +17,7 @@
 #include <cstddef>
 #include <cereal/access.hpp>
 #include <cereal/specialize.hpp>
+#include <cereal/types/vector.hpp>
 #include <vector>
 #include <set>
 #include <map>
@@ -103,6 +104,65 @@ struct WipeTowerRelocation
     bool moved            = false; // re-placed, not just snapped onto the bound it was dropped past
     bool overlaps_objects = false; // no spot on the plate was clear of the objects, so it sits on one
 };
+
+// Plate's own printer bed; slot -1: none.
+struct PlatePrinterBed
+{
+    int                  slot{-1};
+    Pointfs              shape;
+    Pointfs              exclude_areas;
+    std::vector<Pointfs> extruder_areas;
+    std::vector<double>  extruder_heights;
+    double               height{0.};
+    float                height_to_lid{0.f};
+    float                height_to_rod{0.f};
+
+    bool assigned() const { return slot >= 0; }
+    bool operator==(const PlatePrinterBed& rhs) const
+    {
+        return slot == rhs.slot && shape == rhs.shape && exclude_areas == rhs.exclude_areas &&
+               extruder_areas == rhs.extruder_areas && extruder_heights == rhs.extruder_heights &&
+               height == rhs.height && height_to_lid == rhs.height_to_lid && height_to_rod == rhs.height_to_rod;
+    }
+
+    template<class Archive> void serialize(Archive& ar)
+    {
+        ar(slot, shape, exclude_areas, extruder_areas, extruder_heights, height, height_to_lid, height_to_rod);
+    }
+};
+
+// Presets a printer slot selects when active.
+struct PrinterSlot
+{
+    std::string printer;
+    std::string print;
+    std::vector<std::string> filaments;
+    // Unsaved preset changes while another slot is active.
+    DynamicPrintConfig printer_changes;
+    DynamicPrintConfig print_changes;
+    DynamicPrintConfig filament_changes;
+    std::string changed_filament;
+
+    bool has_changes() const { return !printer_changes.empty() || !print_changes.empty() || !filament_changes.empty(); }
+};
+
+// Printer slots as saved with a project.
+struct PrinterSlotsData
+{
+    int                      active_slot{-1};
+    PrinterSlot              project_printer;
+    std::vector<PrinterSlot> slots;
+};
+
+// Content of Metadata/printer_slots.json.
+std::string printer_slots_to_json(const PrinterSlotsData& data);
+// False on invalid input; data is then unchanged.
+bool printer_slots_from_json(const std::string& json, PrinterSlotsData& data);
+// Slots with plates first, then plate-less kept changes.
+std::optional<PrinterSlotsData> select_saved_printer_slots(const std::vector<PrinterSlot>& slots,
+                                                           const std::vector<int>&         plate_slots,
+                                                           int                             active_slot,
+                                                           std::vector<int>&               plate_saved_index);
 
 class PartPlate : public ObjectBase
 {
@@ -209,6 +269,7 @@ private:
 
     // BBS
     DynamicPrintConfig m_config;
+    PlatePrinterBed m_printer_bed;
 
     // SoftFever
     // part plate name
@@ -338,6 +399,7 @@ public:
     void reset_skirt_start_angle();
 
     DynamicPrintConfig* config() { return &m_config; }
+    const PlatePrinterBed& printer_bed() const { return m_printer_bed; }
 
     // set print sequence per plate
     //bool print_seq_same_global = true;
@@ -740,7 +802,7 @@ public:
         std::vector<std::pair<int, int>>	objects_and_instances;
         std::vector<std::pair<int, int>>	instances_outside;
 
-        ar(m_plate_index, m_name, m_print_index, m_origin, m_width, m_depth, m_height, m_locked, m_selected, m_ready_for_slice, m_slice_result_valid, m_apply_invalid, m_printable, m_tmp_gcode_path, objects_and_instances, instances_outside, m_config);
+        ar(m_plate_index, m_name, m_print_index, m_origin, m_width, m_depth, m_height, m_locked, m_selected, m_ready_for_slice, m_slice_result_valid, m_apply_invalid, m_printable, m_tmp_gcode_path, objects_and_instances, instances_outside, m_config, m_printer_bed);
 
         for (std::vector<std::pair<int, int>>::iterator it = objects_and_instances.begin(); it != objects_and_instances.end(); ++it)
             obj_to_instance_set.insert(std::pair(it->first, it->second));
@@ -760,7 +822,7 @@ public:
         for (std::set<std::pair<int, int>>::iterator it = obj_to_instance_set.begin(); it != obj_to_instance_set.end(); ++it)
             objects_and_instances.emplace_back(it->first, it->second);
 
-        ar(m_plate_index, m_name, m_print_index, m_origin, m_width, m_depth, m_height, m_locked, m_selected, m_ready_for_slice, m_slice_result_valid, m_apply_invalid, m_printable, m_tmp_gcode_path, objects_and_instances, instances_outside, m_config);
+        ar(m_plate_index, m_name, m_print_index, m_origin, m_width, m_depth, m_height, m_locked, m_selected, m_ready_for_slice, m_slice_result_valid, m_apply_invalid, m_printable, m_tmp_gcode_path, objects_and_instances, instances_outside, m_config, m_printer_bed);
     }
     /*template<class Archive> void serialize(Archive& ar)
     {
@@ -840,6 +902,10 @@ class PartPlateList : public ObjectBase
 
     int m_filament_count = 1;
 
+    std::vector<PrinterSlot> m_printer_slots;
+    PrinterSlot m_project_printer;
+    PlatePrinterBed m_new_plate_bed;
+
     void init();
     //compute the origin for printable plate with index i
     Vec3d compute_origin(int index, int column_count);
@@ -847,6 +913,12 @@ class PartPlateList : public ObjectBase
     Vec3d compute_origin_for_unprintable();
     //compute shape position
     Vec2d compute_shape_position(int index, int cols);
+    Vec2d printer_row_position(int index) const;
+    void apply_printer_beds(bool move_instances);
+    int plate_bed_width(const PartPlate& plate) const;
+    int plate_bed_depth(const PartPlate& plate) const;
+    double plate_bed_height(const PartPlate& plate) const;
+    void set_plate_shape(PartPlate& plate, const Vec2d& pos);
     //generate icon textures
     void generate_icon_textures();
     void release_icon_textures();
@@ -917,6 +989,34 @@ public:
 
     //reset partplate to init states
     void reinit();
+
+    // Plates with own printer beds exist.
+    bool has_printer_beds() const;
+    Vec2d plate_position(int index) { return compute_shape_position(index, m_plate_cols); }
+    // Assign, or clear with slot -1, a bed.
+    bool set_plate_printer_bed(int index, PlatePrinterBed bed);
+    // New bed for every plate of a slot.
+    bool set_slot_printer_bed(int slot, PlatePrinterBed bed);
+    // Recompute row positions and shapes, objects stay.
+    void refresh_printer_rows();
+    const std::vector<PrinterSlot>& printer_slots() const { return m_printer_slots; }
+    // Slot -1 is the project printer.
+    PrinterSlot* printer_slot(int slot);
+    int find_or_add_printer_slot(const std::string& printer);
+    void clear_printer_slots();
+    void set_printer_slots(std::vector<PrinterSlot> slots, PrinterSlot project_printer);
+    // First plate of a slot, -1 if none.
+    int first_plate_of_slot(int slot) const;
+    int plate_count_of_slot(int slot) const;
+    // Each printer keeps at least one plate.
+    bool can_delete_plate(int index) const;
+    // Its plates go back to the project printer.
+    bool clear_slot_printer_beds(int slot);
+    static bool valid_printer_bed(const PlatePrinterBed& bed);
+    // One bed per plate; objects keep their positions.
+    void load_printer_beds(std::vector<PlatePrinterBed> beds);
+    // Bed for plates created from now on.
+    void set_new_plate_bed(PlatePrinterBed bed) { m_new_plate_bed = std::move(bed); }
 
     //get the plate stride
     double plate_stride_x();
@@ -1131,6 +1231,7 @@ public:
     {
         //ar(cereal::base_class<ObjectBase>(this));
         //Cancel undo/redo for m_shape ,Because the printing area of different models is different, currently if the grid changes, it cannot correspond to the model on the left ui
+        // Slots stay live; plates keep slot ids.
         ar(m_plate_width, m_plate_depth, m_plate_height, m_height_to_lid, m_height_to_rod, m_height_limit_mode, m_plate_count, m_current_plate, m_plate_list, unprintable_plate);
         //ar(m_plate_width, m_plate_depth, m_plate_height, m_plate_count, m_current_plate);
     }

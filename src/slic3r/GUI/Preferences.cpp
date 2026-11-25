@@ -1235,6 +1235,17 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxString too
             }
         }
 
+        if (param == "multi_printer_projects" && !checkbox->GetValue()) {
+            MessageDialog msg_dialog(this,
+                _L("Projects whose plates use different printers cannot be used without this option. All plates then use one printer, and objects may lie outside the plates.\n\nTurn it off anyway?"),
+                _L("Warning"), wxICON_WARNING | wxYES_NO | wxNO_DEFAULT);
+            if (msg_dialog.ShowModal() != wxID_YES) {
+                checkbox->SetValue(true);
+                app_config->set_bool(param, true);
+                app_config->save();
+            }
+        }
+
         e.Skip();
     });
 
@@ -1891,6 +1902,16 @@ void PreferencesDialog::create_items()
     auto item_primitive_dialog = create_item_checkbox(_L("Show options when adding a primitive"),
         _L("If enabled, a dialog asks for the dimensions of a primitive shape before it is added."), "enable_primitive_size_dialog");
     g_sizer->Add(item_primitive_dialog);
+
+    auto item_multi_printer = create_item_checkbox(_L("Multi-printer projects (experimental)"),
+        _L("If enabled, each plate can use its own printer, chosen in the plate settings. The plate is shown at that printer's bed size, and selecting it activates that printer's presets."),
+        "multi_printer_projects", _L("(Requires restart)"));
+    g_sizer->Add(item_multi_printer);
+
+    auto item_multi_printer_zoom = create_item_checkbox(_L("Zoom to the bed when selecting a plate of another printer"),
+        _L("If enabled, selecting a plate of another printer zooms the view to that printer's bed. Only with multi-printer projects."),
+        "multi_printer_zoom_to_bed");
+    g_sizer->Add(item_multi_printer_zoom);
 
     //// CONTROL > Slicing
     g_sizer->Add(create_item_title(_L("Slicing")), 1, wxEXPAND);

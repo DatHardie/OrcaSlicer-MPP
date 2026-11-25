@@ -2791,7 +2791,7 @@ void MenuFactory::append_menu_item_plate_delete(wxMenu *menu, size_t pos)
     // delete current plate
     auto item = append_menu_item(menu, wxID_ANY, name, _L("Remove the selected plate"),
         [](wxCommandEvent&) { plater()->delete_plate(); }, "", nullptr,
-        []() { return plater()->can_delete_plate(); }, m_parent, pos + 1);
+        []() { return plater()->can_delete_curr_plate(); }, m_parent, pos + 1);
 
     // no extra wxEVT_UPDATE_UI handler here: a second handler on the same id runs before the one bound 
     // by append_menu_item() and, without evt.Skip(), swallows the enable/disable condition

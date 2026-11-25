@@ -9,6 +9,7 @@
 
 namespace Slic3r { namespace GUI {
 
+class PartPlateList;
 class Plater;
 
 class FillBedJob : public Job
@@ -31,6 +32,8 @@ class FillBedJob : public Job
     Plater *m_plater;
 
     bool m_instances;
+
+    void shift_from_plate(ArrangePolygon& ap, PartPlateList& plates, int index, int sign) const;
 
 public:
 
