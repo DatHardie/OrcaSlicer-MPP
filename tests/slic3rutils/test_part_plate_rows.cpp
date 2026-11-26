@@ -1,3 +1,6 @@
+// Windows headers first, as in test_plugin_host_api.cpp.
+#include "slic3r/win_platform.hpp"
+
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
