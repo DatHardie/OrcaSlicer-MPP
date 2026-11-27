@@ -554,7 +554,7 @@ void AppConfig::set_defaults()
     }
 
     if (get("multi_printer_projects").empty())
-        set_bool("multi_printer_projects", false);
+        set_bool("multi_printer_projects", true);
 
     if (get("multi_printer_zoom_to_bed").empty())
         set_bool("multi_printer_zoom_to_bed", false);

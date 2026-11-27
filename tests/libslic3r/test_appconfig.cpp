@@ -26,6 +26,22 @@ TEST_CASE("Full collision-volume previews are opt-in and retain the user's prefe
     CHECK(config.get_bool("show_collision_volumes"));
 }
 
+TEST_CASE("Multi-printer projects are on by default and keep the user's choice", "[AppConfig]")
+{
+    AppConfig config;
+    config.set_defaults();
+    CHECK(config.get_bool("multi_printer_projects"));
+
+    config.set_bool("multi_printer_projects", false);
+    config.set_defaults();
+    CHECK_FALSE(config.get_bool("multi_printer_projects"));
+
+    // An empty value counts as not set.
+    config.set("multi_printer_projects", "");
+    config.set_defaults();
+    CHECK(config.get_bool("multi_printer_projects"));
+}
+
 TEST_CASE("AppConfig network version helpers", "[AppConfig]") {
     AppConfig config;
 

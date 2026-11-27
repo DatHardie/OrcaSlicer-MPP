@@ -19,7 +19,7 @@ Works now:
 
 ## Use
 
-1. In **Preferences**, turn on **Multi-printer projects (experimental)** and restart OrcaSlicer. The option is off by default.
+1. **Multi-printer projects (experimental)** in **Preferences** is on by default. Turned off (after a restart), this build works like OrcaSlicer.
 2. Add a printer under **Project Printers**, or change the **Printer** of a plate in the plate settings. **Project printer** is the normal printer of the project.
 
 The plates of each printer form one row. Without plates for other printers, OrcaSlicer works as before.
