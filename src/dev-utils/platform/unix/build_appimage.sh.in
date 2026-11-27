@@ -1,12 +1,36 @@
 #!/usr/bin/env bash
-APPIMAGETOOLURL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$(uname -m).AppImage"
+# Pinned tools, checked against these SHA-256 sums.
+APPIMAGETOOL_VERSION="1.9.1"
+APPIMAGETOOLURL="https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-$(uname -m).AppImage"
+# Continuous runtime fedfad51ac (2026-10-19); signature checked when pinned.
+RUNTIMEURL="https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-$(uname -m)"
+case "$(uname -m)" in
+    x86_64)
+        APPIMAGETOOL_SHA256="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
+        RUNTIME_SHA256="617aa77314d57c8b8e4fae9c3f0b35af7b30d5529cb69e98f64f92510ed98a46" ;;
+    aarch64)
+        APPIMAGETOOL_SHA256="f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158"
+        RUNTIME_SHA256="9a72a744d221576c9347ec074243acc5c3c7568896b12714e0e82e9f0bf47900" ;;
+    *)
+        echo "No pinned appimagetool for $(uname -m)" >&2
+        exit 1 ;;
+esac
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../../.." && pwd)"
 
 
 APP_IMAGE="@SLIC3R_APP_KEY@_Linux_V@SoftFever_VERSION@.AppImage"
 
-wget ${APPIMAGETOOLURL} -O ../appimagetool.AppImage
+# Download; stop on any other checksum.
+fetch_pinned() {
+    wget "$1" -O "$2" && echo "$3  $2" | sha256sum -c - && return 0
+    rm -f "$2"
+    echo "Download or checksum check failed: $1" >&2
+    echo "If upstream rebuilt it, verify the new file before updating the pin." >&2
+    exit 1
+}
+fetch_pinned "${APPIMAGETOOLURL}" ../appimagetool.AppImage "${APPIMAGETOOL_SHA256}"
+fetch_pinned "${RUNTIMEURL}" ../appimage-runtime "${RUNTIME_SHA256}"
 chmod +x ../appimagetool.AppImage
 
 if [ -f /.dockerenv ] ; then # Only run if inside of a Docker Container
@@ -41,10 +65,11 @@ cp "${REPO_ROOT}/scripts/flatpak/com.orcaslicer.@SLIC3R_APP_KEY@.metainfo.xml" \
 
 export ARCH=$(uname -m)
 
-if [ -f /.dockerenv ] ; then # Only run if inside of a Docker Container
-  ../appimagetool.AppImage --appimage-extract-and-run . $([ -n "${container}" ] && echo '--appimage-extract-and-run')
+# The runtime only honours the first "--" option.
+if [ -f /.dockerenv ] || [ -n "${container}" ] ; then # Only run if inside of a container
+  ../appimagetool.AppImage --appimage-extract-and-run --runtime-file ../appimage-runtime .
 else
-  ../appimagetool.AppImage . $([ -n "${container}" ] && echo '--appimage-extract-and-run')
+  ../appimagetool.AppImage --runtime-file ../appimage-runtime .
 fi
 
 mv @SLIC3R_APP_KEY@-$(uname -m).AppImage ${APP_IMAGE}
