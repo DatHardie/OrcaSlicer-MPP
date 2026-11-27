@@ -38,6 +38,7 @@ function usage() {
     echo "For a GitHub Actions-like Linux build locally, use './${SCRIPT_NAME} -g -istrlL'"
     echo "Use './${SCRIPT_NAME} -gF -istrlL' to rebuild the cached runner image first."
     echo "Set ORCA_CONTAINER_CLI, ORCA_DOCKER_IMAGE, ORCA_DOCKER_BASE_IMAGE, or ORCA_DOCKER_CMAKE_VERSION to override the container runtime, cached image tag, base image, or CMake version."
+    echo "Another CMake version also needs ORCA_DOCKER_CMAKE_SHA256, the SHA-256 of its Linux tarball."
     echo "DEPS_EXTRA_BUILD_ARGS and ORCA_EXTRA_BUILD_ARGS add whitespace-separated cmake configure arguments to the deps and OrcaSlicer builds; prefer '--' for arguments that contain spaces."
 }
 
@@ -231,6 +232,9 @@ function resolve_container_cli() {
     exit 1
 }
 
+# ubuntu:24.04 of 2026-11-10, pinned by digest.
+DEFAULT_DOCKER_BASE_IMAGE="ubuntu:24.04@sha256:562111b88caa79c71391c0c4d3c2114a7d5c35915c20561fd893cb1e07929e6b"
+
 function get_docker_runner_image() {
     local base_image
     local docker_cmake_version
@@ -243,7 +247,7 @@ function get_docker_runner_image() {
         return
     fi
 
-    base_image="${ORCA_DOCKER_BASE_IMAGE:-ubuntu:24.04}"
+    base_image="${ORCA_DOCKER_BASE_IMAGE:-${DEFAULT_DOCKER_BASE_IMAGE}}"
     docker_cmake_version="${ORCA_DOCKER_CMAKE_VERSION-4.3.0}"
     recipe_hash=$(find "${SCRIPT_PATH}/build_linux.sh" "${SCRIPT_PATH}/scripts/linux.d" -type f -print0 | sort -z | xargs -0 cat | sha256sum | cut -c1-12)
     sanitized_base_image=$(echo "${base_image}" | tr '/:@' '---' | tr -cs 'A-Za-z0-9_.-' '-')
@@ -253,10 +257,11 @@ function get_docker_runner_image() {
 
 function docker_runner_dockerfile() {
     cat <<'EOF'
-ARG BASE_IMAGE=ubuntu:24.04
+ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
 ARG CMAKE_VERSION=4.3.0
+ARG CMAKE_SHA256=
 
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-c"]
@@ -278,11 +283,28 @@ RUN if [[ -n "${CMAKE_VERSION}" ]] ; then \
         esac ; \
         if [[ -n "${cmake_arch}" ]] ; then \
             cmake_root="/opt/cmake-${CMAKE_VERSION}-linux-${cmake_arch}" ; \
-            if ! curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-${cmake_arch}.tar.gz" | tar -xz -C /opt ; then \
-                echo "Warning: failed to install CMake ${CMAKE_VERSION}; falling back to the distro cmake package." ; \
-            elif [[ -d "${cmake_root}" ]] ; then \
-                ln -sf "${cmake_root}/bin/"* /usr/local/bin/ ; \
+            cmake_tgz="cmake-${CMAKE_VERSION}-linux-${cmake_arch}.tar.gz" ; \
+            case "${CMAKE_VERSION}-${cmake_arch}" in \
+                4.3.0-x86_64) cmake_sha256="201bdabe17a54e017f119cffa247648e9c44327e52473c2cc60a88fded94652a" ;; \
+                4.3.0-aarch64) cmake_sha256="26fe3011f497eb9398115dcabcc094685e634b1841f7c01dc01c5a89b8b0ea0d" ;; \
+                *) cmake_sha256="${CMAKE_SHA256}" ;; \
+            esac ; \
+            if [[ -z "${cmake_sha256}" ]] ; then \
+                echo "Error: no SHA-256 for ${cmake_tgz}; set ORCA_DOCKER_CMAKE_SHA256." >&2 ; \
+                exit 1 ; \
             fi ; \
+            if ! { curl -fsSL -o "/tmp/${cmake_tgz}" "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/${cmake_tgz}" \
+                    && echo "${cmake_sha256}  /tmp/${cmake_tgz}" | sha256sum -c - \
+                    && tar -xzf "/tmp/${cmake_tgz}" -C /opt ; } ; then \
+                echo "Error: failed to download or verify ${cmake_tgz}." >&2 ; \
+                exit 1 ; \
+            fi ; \
+            rm -f "/tmp/${cmake_tgz}" ; \
+            if [[ ! -x "${cmake_root}/bin/cmake" ]] ; then \
+                echo "Error: ${cmake_tgz} has no ${cmake_root}/bin/cmake." >&2 ; \
+                exit 1 ; \
+            fi ; \
+            ln -sf "${cmake_root}/bin/"* /usr/local/bin/ ; \
         else \
             echo "Skipping GitHub Actions CMake install for unsupported architecture $(uname -m)." ; \
         fi ; \
@@ -302,7 +324,7 @@ function ensure_docker_runner_image() {
 
     container_cli="$1"
     runner_image="$2"
-    base_image="${ORCA_DOCKER_BASE_IMAGE:-ubuntu:24.04}"
+    base_image="${ORCA_DOCKER_BASE_IMAGE:-${DEFAULT_DOCKER_BASE_IMAGE}}"
     docker_cmake_version="${ORCA_DOCKER_CMAKE_VERSION-4.3.0}"
 
     if "${container_cli}" image inspect "${runner_image}" >/dev/null 2>&1 ; then
@@ -333,6 +355,7 @@ function ensure_docker_runner_image() {
         -t "${runner_image}"
         --build-arg "BASE_IMAGE=${base_image}"
         --build-arg "CMAKE_VERSION=${docker_cmake_version}"
+        --build-arg "CMAKE_SHA256=${ORCA_DOCKER_CMAKE_SHA256:-}"
     )
     if [[ "${force_rebuild}" == "1" ]] ; then
         build_cmd+=(--no-cache)
