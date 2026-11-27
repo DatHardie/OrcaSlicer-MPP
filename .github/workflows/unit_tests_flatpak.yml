@@ -19,11 +19,11 @@ jobs:
     name: Flatpak Unit Tests
     runs-on: ${{ inputs.os }}
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50@sha256:1de59efef01a946d9f28f1ec3458bf6f61dcee3507d7fecdd473f8134da4ec77
       options: --privileged
     steps:
       - name: Restore test asset
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ inputs.artifact }}
       - name: Run unit tests (bounds-checked sandbox)
@@ -53,7 +53,7 @@ jobs:
           [ -n "$d" ] && [ -f "$d/ctest_results.xml" ] && cp "$d/ctest_results.xml" ctest_results.xml || true
       - name: Upload Test Results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results-${{ inputs.artifact }}
           path: ctest_results.xml
@@ -61,7 +61,7 @@ jobs:
           if-no-files-found: warn
       - name: Delete Test Asset
         if: success()
-        uses: geekyeggo/delete-artifact@v6
+        uses: geekyeggo/delete-artifact@176a747ab7e287e3ff4787bf8a148716375ca118 # v6.0.0
         with:
           name: ${{ inputs.artifact }}
           failOnError: false
