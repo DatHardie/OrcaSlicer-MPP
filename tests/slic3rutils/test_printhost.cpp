@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include <curl/curl.h>
 #include <nlohmann/json.hpp>
 #include <wx/string.h>
 
@@ -269,6 +270,23 @@ TEST_CASE("Error bodies that are not a Moonraker envelope are left unchanged", "
     {
         CHECK(format_error("", "curl:Could not connect", 0) == "curl:Could not connect");
     }
+}
+
+TEST_CASE("An unresolvable host name gets the same message with any libcurl", "[PrintHost][Regression]")
+{
+    // libcurl 7 and 8 word this error differently.
+    const std::string reason = GENERATE(std::string(curl_easy_strerror(CURLE_COULDNT_RESOLVE_HOST)),
+                                        std::string("Couldn't resolve host name"), std::string("Could not resolve hostname"));
+    const std::string error = "curl:" + reason + ":\nCould not resolve host: printer.local\n[Error 6]";
+    CAPTURE(error);
+    CHECK(format_error("", error, 0) == "The Hostname/IP/URL could not be parsed, please check it and try again.");
+}
+
+TEST_CASE("Other libcurl errors keep their own text", "[PrintHost]")
+{
+    const std::string error = std::string("curl:") + curl_easy_strerror(CURLE_COULDNT_CONNECT) +
+                              ":\nFailed to connect to 127.0.0.1 port 7125\n[Error 7]";
+    CHECK(format_error("", error, 0) == error);
 }
 
 TEST_CASE("Print host error code is read from a JSON reply", "[PrintHost]")
