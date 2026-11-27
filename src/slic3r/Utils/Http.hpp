@@ -15,6 +15,9 @@
 
 #define MAX_SIZE_TO_FILE    3*1024
 
+// OpenSSL's SSL_CTX.
+struct ssl_ctx_st;
+
 namespace Slic3r {
 
 enum HttpErrorCode
@@ -200,6 +203,8 @@ public:
     // Return empty string on success or error message on fail.
     static std::string tls_global_init();
     static std::string tls_system_cert_store();
+    // Accept what OpenSSL 1.1.1 accepted.
+    static void tls_openssl111_rules(ssl_ctx_st *ctx);
 
 	// converts the given string to an url_encoded_string
 	static std::string url_encode(const std::string &str);

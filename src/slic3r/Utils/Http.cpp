@@ -29,6 +29,10 @@
 #include <boost/log/trivial.hpp>
 
 #include <curl/curl.h>
+#include <openssl/crypto.h>
+#include <openssl/obj_mac.h>
+#include <openssl/prov_ssl.h>
+#include <openssl/ssl.h>
 #include <utility>
 
 #ifdef OPENSSL_CERT_OVERRIDE
@@ -40,6 +44,38 @@ namespace fs = boost::filesystem;
 namespace Slic3r {
 
 // Private
+
+namespace {
+
+using SecurityCallback = int (*)(const SSL *, const SSL_CTX *, int, int, int, void *, void *);
+// OpenSSL's own callback decides everything else.
+std::atomic<SecurityCallback> openssl_security{nullptr};
+
+// Versions and digests as OpenSSL 1.1.1 rated them.
+int openssl111_security(const SSL *s, const SSL_CTX *ctx, int op, int bits, int nid, void *other, void *ex)
+{
+    const int level = s != nullptr ? SSL_get_security_level(s) : SSL_CTX_get_security_level(ctx);
+    if (op == SSL_SECOP_VERSION && (nid == TLS1_VERSION || nid == TLS1_1_VERSION))
+        return level <= (nid == TLS1_VERSION ? 2 : 3);
+    if ((op & SSL_SECOP_OTHER_TYPE) == SSL_SECOP_OTHER_SIGALG) {
+        // 1.1.1: half the digest bits.
+        if (nid == NID_sha1)
+            bits = 80;
+        else if (nid == NID_md5_sha1)
+            bits = 144;
+        else if (nid == NID_md5)
+            bits = 64;
+    }
+    return openssl_security.load()(s, ctx, op, bits, nid, other, ex);
+}
+
+CURLcode curl_openssl111_rules(CURL *, void *ssl_ctx, void *)
+{
+    Http::tls_openssl111_rules(static_cast<SSL_CTX *>(ssl_ctx));
+    return CURLE_OK;
+}
+
+} // namespace
 
 struct CurlGlobalInit
 {
@@ -211,9 +247,13 @@ Http::priv::priv(const std::string &url)
 	::curl_easy_setopt(curl, CURLOPT_URL, url.c_str());   // curl makes a copy internally
 	::curl_easy_setopt(curl, CURLOPT_USERAGENT, SLIC3R_APP_NAME "/" SoftFever_VERSION);
 	::curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, &error_buffer.front());
+	// Minimum TLS 1.0, as in curl 7.
 #ifdef __WINDOWS__
-	::curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_MAX_TLSv1_2);
+	::curl_easy_setopt(curl, CURLOPT_SSLVERSION, static_cast<long>(CURL_SSLVERSION_TLSv1_0 | CURL_SSLVERSION_MAX_TLSv1_2));
+#else
+	::curl_easy_setopt(curl, CURLOPT_SSLVERSION, static_cast<long>(CURL_SSLVERSION_TLSv1_0));
 #endif
+	::curl_easy_setopt(curl, CURLOPT_SSL_CTX_FUNCTION, curl_openssl111_rules);
 	::curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
 	::curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
 
@@ -955,6 +995,20 @@ std::string Http::tls_global_init()
         CurlGlobalInit::instance = std::make_unique<CurlGlobalInit>();
 
     return CurlGlobalInit::instance->message;
+}
+
+void Http::tls_openssl111_rules(ssl_ctx_st *ctx)
+{
+    const SecurityCallback current = SSL_CTX_get_security_callback(ctx);
+    if (current == &openssl111_security)
+        return;
+    SecurityCallback stored = nullptr;
+    // Leave a foreign callback alone.
+    if (!openssl_security.compare_exchange_strong(stored, current) && stored != current)
+        return;
+    SSL_CTX_set_security_callback(ctx, &openssl111_security);
+    // 1.1.1 also accepted servers without RFC 5746.
+    SSL_CTX_set_options(ctx, SSL_OP_LEGACY_SERVER_CONNECT);
 }
 
 std::string Http::tls_system_cert_store()
