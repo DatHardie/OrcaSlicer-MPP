@@ -14184,13 +14184,28 @@ void Plater::priv::on_action_print_all(SimpleEvent&)
 // Each sliced plate goes to its printer's host.
 void Plater::priv::send_plates_to_own_printers()
 {
+    // Plates switch only after the previous run completes.
+    auto wait_for_run = [this]() {
+        if (!background_process.running())
+            return;
+        wxBusyCursor wait;
+        wxWindowDisabler disabler;
+        while (background_process.running()) {
+            wxYield();
+            wxMilliSleep(30);
+        }
+    };
     const int original = partplate_list.get_curr_plate_index();
     for (int i = 0; i < partplate_list.get_plate_count(); ++i) {
+        wait_for_run();
         if (!partplate_list.get_plate(i)->is_slice_result_ready_for_print())
             continue;
-        q->select_sliced_plate(i);
+        // Selecting may invalidate the plate.
+        if (q->select_sliced_plate(i) != 0 || !partplate_list.get_plate(i)->is_slice_result_ready_for_print())
+            continue;
         q->send_gcode_legacy(PLATE_CURRENT_IDX, nullptr);
     }
+    wait_for_run();
     q->select_sliced_plate(original);
 }
 
