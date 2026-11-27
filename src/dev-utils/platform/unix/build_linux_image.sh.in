@@ -461,6 +461,9 @@ echo -n "Creating Appimage for distribution..."
         rm -fR package_appimage
     else
         popd > /dev/null
+        # Keep package_appimage for debugging, but fail.
+        echo "AppImage creation failed" >&2
+        exit 1
     fi
 # } &> $ROOT/Build.log # Capture all command output
 echo "done"
