@@ -26,6 +26,8 @@ jobs:
   build_orca:
     name: Build OrcaSlicer
     runs-on: ${{ inputs.os }}
+    outputs:
+      ver: ${{ steps.version.outputs.ver }}
     env:
       date:
       ver:
@@ -113,6 +115,7 @@ jobs:
           ccache -z
 
       - name: Get the version and date on Ubuntu and macOS
+        id: version
         if: runner.os != 'Windows'
         run: |
           ver_pure=$(grep 'set(SoftFever_VERSION' version.inc | cut -d '"' -f2)
@@ -124,6 +127,7 @@ jobs:
             git_commit_hash=""
           fi
           echo "ver=$ver" >> $GITHUB_ENV
+          echo "ver=$ver" >> "$GITHUB_OUTPUT"
           echo "ver_pure=$ver_pure" >> $GITHUB_ENV
           echo "date=$(date +'%Y%m%d')" >> $GITHUB_ENV
           echo "git_commit_hash=$git_commit_hash" >> $GITHUB_ENV
@@ -761,16 +765,6 @@ jobs:
           retention-days: 5
           if-no-files-found: error
 
-      - name: Run external slicer regression tests
-        if: runner.os == 'Linux' && inputs.arch != 'aarch64'
-        timeout-minutes: 20
-        shell: bash
-        run: |
-          test_repo_dir="${{ runner.temp }}/orca-test-repo"
-          rm -rf "$test_repo_dir"
-          git clone --depth 1 https://github.com/OrcaSlicer/orca-test-repo.git "$test_repo_dir"
-          python3 "$test_repo_dir/run_test.py" "${{ github.workspace }}/build/package/bin/orca-slicer"
-
       - name: Build orca_custom_preset_tests
         if: github.ref == 'refs/heads/main' && runner.os == 'Linux' && !vars.SELF_HOSTED && inputs.arch != 'aarch64'
         working-directory: ${{ github.workspace }}/build/src/Release
@@ -883,3 +877,72 @@ jobs:
                 '.[] | select((.key | ltrimstr($prefix) | split("-")[0] | tonumber?) < $run) | .id' \
             | tr -d '\r' \
             | while read -r id; do gh cache delete "$id"; done
+
+  # Third-party test code: own job, after upload, no caches.
+  regression_tests:
+    name: Slicer regression tests
+    needs: build_orca
+    if: ${{ inputs.arch != 'aarch64' && (startsWith(inputs.os, 'ubuntu') || inputs.os == 'orca-lnx-server') }}
+    runs-on: ${{ inputs.os }}
+    permissions:
+      contents: read
+    env:
+      # Reviewed commit; review again before changing.
+      ORCA_TEST_REPO_COMMIT: 279fdb693626cd104ab3875b4710bb916fa29acd
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: 'false'
+          persist-credentials: false
+
+      - name: Apt-Install Dependencies
+        if: ${{ !vars.SELF_HOSTED }}
+        uses: ./.github/actions/apt-install-deps
+
+      - name: Download AppImage
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: OrcaSlicer_Linux_ubuntu_2404_${{ needs.build_orca.outputs.ver }}
+          path: ${{ runner.temp }}/appimage
+
+      - name: Run external slicer regression tests
+        timeout-minutes: 20
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          appimage=$(find appimage -name "*.AppImage" | head -1)
+          chmod +x "$appimage"
+          "$appimage" --appimage-extract > /dev/null
+          # The bare binary misses the bundled libraries.
+          test -x squashfs-root/AppRun
+          test_repo_dir="${{ runner.temp }}/orca-test-repo"
+          rm -rf "$test_repo_dir"
+          git init -q "$test_repo_dir"
+          git -C "$test_repo_dir" fetch -q --depth 1 https://github.com/OrcaSlicer/orca-test-repo.git "$ORCA_TEST_REPO_COMMIT"
+          git -C "$test_repo_dir" checkout -q FETCH_HEAD
+          test "$(git -C "$test_repo_dir" rev-parse HEAD)" = "$ORCA_TEST_REPO_COMMIT"
+          # Prebuilt validator has no source; never run it.
+          chmod a-x "$test_repo_dir/bin/orca_gcode_validator"
+          # Test code runs as a user without sudo.
+          sudo useradd --create-home --user-group orcatest
+          rt=/home/orcatest/rt
+          src="$rt/src"
+          sudo install -d "$src/src/libslic3r" "$src/resources"
+          sudo cp -a squashfs-root "$test_repo_dir" "$rt/"
+          # The suite reads only these from the source tree.
+          sudo cp -a "${{ github.workspace }}/resources/profiles" "${{ github.workspace }}/resources/printers" "$src/resources/"
+          sudo cp "${{ github.workspace }}/src/libslic3r/PrintConfig.cpp" "$src/src/libslic3r/"
+          sudo cp "${{ github.workspace }}/.github/regression-test-requirements.txt" "$rt/"
+          sudo chown -R orcatest:orcatest "$rt"
+          cd /
+          as_test() { sudo -u orcatest env -i HOME=/home/orcatest PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 "$@"; }
+          # run_test.py skips its install when .venv exists.
+          as_test python3 -m venv "$rt/orca-test-repo/.venv"
+          as_test "$rt/orca-test-repo/.venv/bin/python" -m pip install --quiet --require-hashes --only-binary :all: \
+            -r "$rt/regression-test-requirements.txt"
+          rc=0
+          as_test ORCA_SOURCE="$src" PYTEST_ADDOPTS="--deselect test_golden_slices.py::test_golden_slice[Stanford_Bunny.3mf]" \
+            python3 "$rt/orca-test-repo/run_test.py" "$rt/squashfs-root/AppRun" || rc=$?
+          sudo pkill -KILL -u orcatest || true
+          exit "$rc"
