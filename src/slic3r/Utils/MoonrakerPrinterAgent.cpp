@@ -1966,7 +1966,6 @@ void MoonrakerPrinterAgent::run_status_stream(std::string dev_id, std::string ba
             // Unverified, like the agent's HTTP requests, so a printer's self-signed certificate is accepted
             ssl::context ctx{ssl::context::tls_client};
             ctx.set_verify_mode(ssl::verify_none);
-            Http::tls_openssl111_rules(ctx.native_handle());
             websocket::stream<beast::ssl_stream<beast::tcp_stream>> ws{ioc, ctx};
             connection_lost = run_connection(ws);
         } else {

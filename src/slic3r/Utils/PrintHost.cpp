@@ -208,9 +208,7 @@ wxString PrintHost::format_error(const std::string &body, const std::string &err
     } else {
         if (error.find("curl:Timeout was reached") != std::string::npos) {
             return timed_out_message();
-        }else if(error.find("curl:Couldn't resolve host name")!= std::string::npos
-                 // libcurl 8 says "Could not resolve hostname".
-                 || error.find("curl:Could not resolve hostname")!= std::string::npos){
+        }else if(error.find("curl:Couldn't resolve host name")!= std::string::npos){
             return _L("The Hostname/IP/URL could not be parsed, please check it and try again.");
         } else if (error.find("Connection was reset") != std::string::npos){
             return _L("File/data transfer interrupted. Please check the printer and network, then try it again.");
