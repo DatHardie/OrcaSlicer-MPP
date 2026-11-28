@@ -17,10 +17,4 @@ struct RowLayoutPlate
 // Throws std::invalid_argument on invalid sizes or gap.
 std::vector<Vec2d> printer_row_offsets(const std::vector<RowLayoutPlate> &plates, double gap_ratio);
 
-// Plate whose cell holds point, else -1.
-int printer_row_plate_at(const std::vector<RowLayoutPlate> &plates,
-                         const std::vector<Vec2d>          &offsets,
-                         const Vec2d                       &point,
-                         double                             gap_ratio);
-
 } // namespace Slic3r

@@ -17,7 +17,6 @@
 #include <cstddef>
 #include <cereal/access.hpp>
 #include <cereal/specialize.hpp>
-#include <cereal/types/vector.hpp>
 #include <vector>
 #include <set>
 #include <map>
@@ -992,7 +991,6 @@ public:
 
     // Plates with own printer beds exist.
     bool has_printer_beds() const;
-    Vec2d plate_position(int index) { return compute_shape_position(index, m_plate_cols); }
     // Assign, or clear with slot -1, a bed.
     bool set_plate_printer_bed(int index, PlatePrinterBed bed);
     // New bed for every plate of a slot.
@@ -1231,7 +1229,6 @@ public:
     {
         //ar(cereal::base_class<ObjectBase>(this));
         //Cancel undo/redo for m_shape ,Because the printing area of different models is different, currently if the grid changes, it cannot correspond to the model on the left ui
-        // Slots stay live; plates keep slot ids.
         ar(m_plate_width, m_plate_depth, m_plate_height, m_height_to_lid, m_height_to_rod, m_height_limit_mode, m_plate_count, m_current_plate, m_plate_list, unprintable_plate);
         //ar(m_plate_width, m_plate_depth, m_plate_height, m_plate_count, m_current_plate);
     }

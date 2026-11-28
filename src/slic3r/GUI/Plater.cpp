@@ -13345,7 +13345,14 @@ void Plater::priv::on_select_preset(wxCommandEvent &evt)
     Slic3r::put_other_changes();
 
     // update slice state and set bedtype default for 3rd-party printer
-    invalidate_plates_for_presets(preset_type);
+    if (multi_printer_enabled()) {
+        invalidate_plates_for_presets(preset_type);
+        return;
+    }
+    auto plate_list = partplate_list.get_plate_list();
+    for (auto plate : plate_list) {
+         plate->update_slice_result_valid_state(false);
+    }
 }
 
 void Plater::priv::on_slicing_update(SlicingStatusEvent &evt)
@@ -15721,9 +15728,15 @@ void Plater::priv::store_printer_slots(PlateDataPtrs& plate_data, Model& target)
     for (size_t i = 0; i < saved_index.size(); ++i)
         if (saved_index[i] >= 0)
             plate_data[i]->printer_slot = saved_index[i];
-    PresetBundle::erase_secure_options(data->project_printer.printer_changes);
+    // Print host addresses and credentials stay out.
+    auto erase_secure_options = [](DynamicPrintConfig& config) {
+        for (const char* key : {"print_host", "print_host_webui", "printhost_apikey", "printhost_cafile", "printhost_user",
+                                "printhost_password", "printhost_port"})
+            config.erase(key);
+    };
+    erase_secure_options(data->project_printer.printer_changes);
     for (PrinterSlot& slot : data->slots)
-        PresetBundle::erase_secure_options(slot.printer_changes);
+        erase_secure_options(slot.printer_changes);
     target.printer_slots = printer_slots_to_json(*data);
 }
 
@@ -19033,9 +19046,10 @@ void Plater::load_gcode(const wxString& filename)
 
     // BSS: create a new project when load_gcode, force close previous one
     if (file_config) {
-        auto check = [this](bool yes_or_no) {
-            return yes_or_no || (check_printer_slot_changes(_L("Load project"), _L("Some presets are modified.")) &&
-                                 wxGetApp().check_and_save_current_preset_changes(_L("Load project"), _L("Some presets are modified.")));
+        auto check = [](bool yes_or_no) {
+            if (!yes_or_no && !wxGetApp().plater()->check_printer_slot_changes(_L("Load project"), _L("Some presets are modified.")))
+                return false;
+            return yes_or_no || wxGetApp().check_and_save_current_preset_changes(_L("Load project"), _L("Some presets are modified."));
         };
         if (close_with_confirm(check) == wxID_CANCEL || new_project(true, true) != wxID_YES)
             return;
@@ -21499,7 +21513,9 @@ int Plater::export_3mf(const boost::filesystem::path& output_path, SaveStrategy 
 
 
     // get type and color for platedata
+    auto* filament_color = dynamic_cast<const ConfigOptionStrings*>(cfg.option("filament_colour"));
     auto* nozzle_diameter_option = dynamic_cast<const ConfigOptionFloats*>(cfg.option("nozzle_diameter"));
+    auto* filament_id_opt = dynamic_cast<const ConfigOptionStrings*>(cfg.option("filament_ids"));
     std::string nozzle_diameter_str;
     if (nozzle_diameter_option)
         nozzle_diameter_str = nozzle_diameter_option->serialize();
@@ -21516,8 +21532,8 @@ int Plater::export_3mf(const boost::filesystem::path& output_path, SaveStrategy 
         if (plate_data->is_sliced_valid)
             p->plate_printer_info(i, *plate_data);
         DynamicPrintConfig& plate_cfg       = plate_data->slice_config ? *plate_data->slice_config : cfg;
-        auto*               filament_color  = dynamic_cast<const ConfigOptionStrings*>(plate_cfg.option("filament_colour"));
-        auto*               filament_id_opt = dynamic_cast<const ConfigOptionStrings*>(plate_cfg.option("filament_ids"));
+        filament_color                      = dynamic_cast<const ConfigOptionStrings*>(plate_cfg.option("filament_colour"));
+        filament_id_opt                     = dynamic_cast<const ConfigOptionStrings*>(plate_cfg.option("filament_ids"));
         auto*               plate_agent     = id_agent;
         if (plate_data->bbl_printer)
             plate_agent = *plate_data->bbl_printer ? wxGetApp().getAgent() : nullptr;
@@ -24142,7 +24158,8 @@ void Plater::open_platesettings_dialog(wxCommandEvent& evt) {
     dlg.set_plate_name(from_u8(curr_plate->get_plate_name()));
 
     const int old_printer_choice = dlg.get_printer_choice();
-    const int result = dlg.ShowModal();
+    dlg.ShowModal();
+    const int result = dlg.GetReturnCode();
     rename_plate(p->partplate_list.get_curr_plate_index(), dlg.get_plate_name().ToUTF8().data());
 
     const int printer_choice = dlg.get_printer_choice();

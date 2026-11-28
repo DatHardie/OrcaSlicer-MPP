@@ -580,6 +580,22 @@ TEST_CASE("Plate printers and printer slots survive a project round trip", "[3mf
     release_PlateData_list(plates);
 }
 
+TEST_CASE("Copying or moving a model keeps its printer slots", "[3mf]")
+{
+    const std::string slots = GENERATE(std::string(), std::string(R"({"version": 1, "slots": []})"));
+    Model source;
+    source.printer_slots = slots;
+
+    Model copy;
+    copy = source;
+    CHECK(copy.printer_slots == slots);
+    CHECK(source.printer_slots == slots);
+
+    Model moved;
+    moved = std::move(copy);
+    CHECK(moved.printer_slots == slots);
+}
+
 TEST_CASE("A published 3MF carries no printer slots", "[3mf]")
 {
     const bool   published = GENERATE(false, true);

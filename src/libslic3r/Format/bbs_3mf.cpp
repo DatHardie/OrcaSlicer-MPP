@@ -1728,7 +1728,6 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             }
             PlateData * plate = plate_data_list[it->first-1];
             plate->locked = it->second->locked;
-            plate->printer_slot = it->second->printer_slot;
             plate->plate_index = it->second->plate_index-1;
             plate->obj_inst_map = it->second->obj_inst_map;
             plate->gcode_file = it->second->gcode_file;
@@ -8762,7 +8761,7 @@ bool _BBS_3MF_Exporter::_add_model_config_file_to_archive(mz_zip_archive& archiv
         return result;
     }
 
-    bool _BBS_3MF_Exporter::_add_slice_info_config_file_to_archive(mz_zip_archive& archive, const Model& model, PlateDataPtrs& plate_data_list, const ObjectToObjectDataMap &objects_data, const DynamicPrintConfig& config)
+    bool _BBS_3MF_Exporter::_add_slice_info_config_file_to_archive(mz_zip_archive& archive, const Model& model, PlateDataPtrs& plate_data_list, const ObjectToObjectDataMap &objects_data, const DynamicPrintConfig& export_config)
     {
         std::stringstream stream;
         // Store mesh transformation in full precision, as the volumes are stored transformed and they need to be transformed back
@@ -8790,8 +8789,8 @@ bool _BBS_3MF_Exporter::_add_model_config_file_to_archive(mz_zip_archive& archiv
                 stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << PLATE_IDX_ATTR        << "\" " << VALUE_ATTR << "=\"" << plate_data->plate_index + 1 << "\"/>\n";
 
                 // Plates of other printers bring their config.
-                const DynamicPrintConfig& plate_config = plate_data->slice_config ? *plate_data->slice_config : config;
-                int timelapse_type = int(plate_config.opt_enum<TimelapseType>("timelapse_type"));
+                const DynamicPrintConfig& config = plate_data->slice_config ? *plate_data->slice_config : export_config;
+                int timelapse_type = int(config.opt_enum<TimelapseType>("timelapse_type"));
                 for (auto it = plate_data->warnings.begin(); it != plate_data->warnings.end(); it++) {
                     if (it->msg == NOT_GENERATE_TIMELAPSE) {
                         timelapse_type = -1;
@@ -8799,9 +8798,9 @@ bool _BBS_3MF_Exporter::_add_model_config_file_to_archive(mz_zip_archive& archiv
                     }
                 }
 
-                std::vector<int> extruder_types      = plate_config.option<ConfigOptionEnumsGeneric>("extruder_type")->values;
-                std::vector<int> nozzle_volume_types = plate_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type")->values;
-                auto* nozzle_volume_type_option = dynamic_cast<const ConfigOptionEnumsGeneric*>(plate_config.option("nozzle_volume_type"));
+                std::vector<int> extruder_types      = config.option<ConfigOptionEnumsGeneric>("extruder_type")->values;
+                std::vector<int> nozzle_volume_types = config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type")->values;
+                auto* nozzle_volume_type_option = dynamic_cast<const ConfigOptionEnumsGeneric*>(config.option("nozzle_volume_type"));
 
                 stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << EXTRUDER_TYPE_ATTR << "\" " << VALUE_ATTR << "=\"";
                 add_vector(stream, extruder_types);
@@ -8811,7 +8810,7 @@ bool _BBS_3MF_Exporter::_add_model_config_file_to_archive(mz_zip_archive& archiv
                 add_vector(stream, nozzle_volume_types);
                 stream << "\"/>\n";
 
-                auto* nozzle_diameter_option = dynamic_cast<const ConfigOptionFloats*>(plate_config.option("nozzle_diameter"));
+                auto* nozzle_diameter_option = dynamic_cast<const ConfigOptionFloats*>(config.option("nozzle_diameter"));
                 std::string nozzle_diameters_str;
                 if (nozzle_diameter_option)
                     nozzle_diameters_str = nozzle_diameter_option->serialize();
@@ -8823,7 +8822,7 @@ bool _BBS_3MF_Exporter::_add_model_config_file_to_archive(mz_zip_archive& archiv
                 // config value; the grouping result rounds it to the nearest of {0.2,0.4,0.6,0.8} for its
                 // internal matching key, so reading that back would rewrite a non-standard nozzle
                 // (e.g. 0.5 -> 0.4). Use this flag to keep the exact config value in that case.
-                auto* extruder_max_nozzle_count_option = dynamic_cast<const ConfigOptionInts*>(plate_config.option("extruder_max_nozzle_count"));
+                auto* extruder_max_nozzle_count_option = dynamic_cast<const ConfigOptionInts*>(config.option("extruder_max_nozzle_count"));
                 const bool has_multi_nozzle_extruder = extruder_max_nozzle_count_option &&
                     std::any_of(extruder_max_nozzle_count_option->values.begin(), extruder_max_nozzle_count_option->values.end(),
                                 [](int v) { return v > 1; });
@@ -8847,13 +8846,13 @@ bool _BBS_3MF_Exporter::_add_model_config_file_to_archive(mz_zip_archive& archiv
                 else
                     stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << ENABLE_FILAMENT_DYNAMIC_MAP_ATTR << "\" " << VALUE_ATTR << "=\"" << std::boolalpha << false << "\"/>\n";
                 {
-                    bool has_filament_switcher = plate_config.has("has_filament_switcher") ? plate_config.opt_bool("has_filament_switcher") : false;
+                    bool has_filament_switcher = config.has("has_filament_switcher") ? config.opt_bool("has_filament_switcher") : false;
                     stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << HAS_FILAMENT_SWITCHER_ATTR << "\" " << VALUE_ATTR << "=\"" << std::boolalpha << has_filament_switcher << "\"/>\n";
                 }
 
                 std::vector<int> filament_maps = plate_data->filament_maps;
                 if (filament_maps.empty())
-                    filament_maps = plate_config.option<ConfigOptionInts>("filament_map")->values;
+                    filament_maps = config.option<ConfigOptionInts>("filament_map")->values;
                 stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << FILAMENT_MAP_ATTR << "\" " << VALUE_ATTR << "=\"";
                 add_vector<int>(stream, filament_maps);
                 stream << "\"/>\n";
@@ -8871,7 +8870,7 @@ bool _BBS_3MF_Exporter::_add_model_config_file_to_archive(mz_zip_archive& archiv
                 // "<name>_id_<object index>_copy_<instance index>" (see GCode::set_object_info), which we
                 // reconstruct here from the (sorted) objects_and_instances list. identify_id is unchanged.
                 // BambuLab printers keep the raw object name.
-                const GCodeFlavor slice_gcode_flavor    = plate_config.opt_enum<GCodeFlavor>("gcode_flavor");
+                const GCodeFlavor slice_gcode_flavor    = config.opt_enum<GCodeFlavor>("gcode_flavor");
                 const bool        use_gcode_object_name  = !plate_data->bbl_printer.value_or(GCodeProcessor::s_IsBBLPrinter) &&
                     (slice_gcode_flavor == gcfKlipper || slice_gcode_flavor == gcfMarlinLegacy ||
                      slice_gcode_flavor == gcfMarlinFirmware || slice_gcode_flavor == gcfRepRapFirmware);

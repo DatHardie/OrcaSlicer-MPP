@@ -16,8 +16,8 @@ Code: `PartPlate.cpp` (`select_saved_printer_slots`, `printer_slots_to_json`,
 - `Metadata/project_settings.config` holds the full configuration that was active when saving
   (printer, process and filaments with unsaved changes), as in OrcaSlicer. If `active_slot` is not
   `-1`, this is a plate printer, not the project printer.
-- Other printers are stored by preset name plus their unsaved changes; the fork embeds no presets
-  for them (project-embedded presets are embedded as in OrcaSlicer).
+- Other printers are stored by preset name plus their unsaved changes; no presets are embedded
+  for them (project-embedded presets are embedded as before).
 - Object positions are world coordinates. If a plate has its own printer, plates are laid out in
   one row per printer, in the order of each printer's first plate (`PrinterRowLayout.cpp`);
   otherwise OrcaSlicer's grid is used. The layout itself is not stored.
@@ -52,7 +52,7 @@ Example (`active_slot` `-1`: the project printer was active):
   ],
   "print": "0.20mm Standard @Creality Ender3V2",
   "print_changes": {},
-  "printer": "Testdrucker Ender 3 V2",
+  "printer": "Creality Ender-3 V2 0.4 nozzle",
   "printer_changes": {}
  },
  "slots": [
@@ -64,7 +64,7 @@ Example (`active_slot` `-1`: the project printer was active):
    ],
    "print": "0.20mm Standard @Voron",
    "print_changes": {},
-   "printer": "Testdrucker Voron 0.1",
+   "printer": "Voron 0.1 0.4 nozzle",
    "printer_changes": {}
   }
  ],
@@ -95,7 +95,7 @@ A printer entry:
 
 - Every 3MF export through `Plater::export_3mf` writes the additions, except exports with
   `SaveStrategy::SkipModel` (sliced files and files sent to a printer) and minimal published 3MF,
-  which contain neither.
+  which contain neither. Files saved from the command line do not contain them.
 - In sliced files each `plate_N.gcode` is sliced with its plate's printer, and
   `Metadata/slice_info.config` describes each plate with the settings it was sliced with:
   `printer_model_id` from the plate's printer preset (from the active printer if that preset is
@@ -120,7 +120,7 @@ A printer entry:
   printer is active, its bed is not restored.
 - Objects are not moved.
 
-Readers without these additions, such as OrcaSlicer itself or this fork with the option off,
-ignore the key and do not use the file (OrcaSlicer only copies it into its temporary project
-folder like other `Metadata/*.json`). All plates get the printer of `project_settings.config`,
+Readers without these additions, or with **Multi-printer projects** off, ignore the key and do
+not use the file (a reader without them only copies it into its temporary project folder like
+other `Metadata/*.json`). All plates get the printer of `project_settings.config`,
 and objects can lie outside their plates or on other plates. Saving there drops both additions.

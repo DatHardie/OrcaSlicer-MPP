@@ -5471,12 +5471,6 @@ DynamicPrintConfig PresetBundle::full_config_secure(std::optional<std::vector<in
 {
     DynamicPrintConfig config = this->full_fff_config(false, filament_maps);
     //FIXME legacy, the keys should not be there after conversion to a Physical Printer profile.
-    erase_secure_options(config);
-    return config;
-}
-
-void PresetBundle::erase_secure_options(DynamicPrintConfig &config)
-{
     config.erase("print_host");
     config.erase("print_host_webui");
     config.erase("printhost_apikey");
@@ -5484,6 +5478,7 @@ void PresetBundle::erase_secure_options(DynamicPrintConfig &config)
     config.erase("printhost_user");    
     config.erase("printhost_password");    
     config.erase("printhost_port");
+    return config;
 }
 
 std::vector<std::vector<std::vector<float>>> PresetBundle::get_full_flush_matrix(bool with_multiplier) const

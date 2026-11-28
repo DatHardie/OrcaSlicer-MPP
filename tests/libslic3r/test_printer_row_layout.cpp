@@ -77,29 +77,3 @@ TEST_CASE("Invalid plate sizes and gaps are rejected", "[PrinterRowLayout]")
     CHECK_THROWS_AS(printer_row_offsets({{0, Vec2d(100., 100.)}}, bad_gap), std::invalid_argument);
     CHECK_NOTHROW(printer_row_offsets({{0, Vec2d(100., 100.)}}, 0.));
 }
-
-TEST_CASE("A point maps to the plate whose cell holds it", "[PrinterRowLayout]")
-{
-    const std::vector<RowLayoutPlate> plates{{0, Vec2d(350., 350.)}, {1, Vec2d(120., 120.)}, {0, Vec2d(350., 350.)}};
-    const auto offsets = printer_row_offsets(plates, gap);
-
-    CHECK(printer_row_plate_at(plates, offsets, Vec2d(175., 175.), gap) == 0);
-    CHECK(printer_row_plate_at(plates, offsets, offsets[2] + Vec2d(10., 10.), gap) == 2);
-    CHECK(printer_row_plate_at(plates, offsets, offsets[1] + Vec2d(60., 60.), gap) == 1);
-    // The gap right of plate 1.
-    CHECK(printer_row_plate_at(plates, offsets, offsets[1] + Vec2d(130., 60.), gap) == 1);
-}
-
-TEST_CASE("Points outside every cell map to no plate", "[PrinterRowLayout]")
-{
-    const std::vector<RowLayoutPlate> plates{{0, Vec2d(350., 350.)}, {1, Vec2d(120., 120.)}};
-    const auto offsets = printer_row_offsets(plates, gap);
-    const double nan = std::numeric_limits<double>::quiet_NaN();
-
-    CHECK(printer_row_plate_at(plates, offsets, Vec2d(-1., 10.), gap) == -1);
-    CHECK(printer_row_plate_at(plates, offsets, Vec2d(10., 351.), gap) == -1);
-    CHECK(printer_row_plate_at(plates, offsets, offsets[1] + Vec2d(200., 60.), gap) == -1);
-    CHECK(printer_row_plate_at(plates, offsets, Vec2d(nan, 10.), gap) == -1);
-    // Mismatched offsets are refused, not read past.
-    CHECK(printer_row_plate_at(plates, {Vec2d::Zero()}, Vec2d(10., 10.), gap) == -1);
-}

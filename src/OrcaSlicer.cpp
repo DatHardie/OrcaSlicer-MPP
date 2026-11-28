@@ -8099,6 +8099,8 @@ int CLI::run(int argc, char **argv)
             }
         }
 
+        // Multi-printer data is for the GUI only.
+        m_models[0].printer_slots.clear();
         if (!this->export_project(&m_models[0], export_3mf_file, plate_data_list, project_presets, thumbnails, no_light_thumbnails, top_thumbnails, pick_thumbnails,
                                 calibration_thumbnails, plate_bboxes, &m_print_config, minimum_save, plate_to_slice - 1))
         {

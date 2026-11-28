@@ -42,6 +42,22 @@ TEST_CASE("Multi-printer projects are on by default and keep the user's choice",
     CHECK(config.get_bool("multi_printer_projects"));
 }
 
+TEST_CASE("Zoom to the bed of another printer is off by default and keeps the user's choice", "[AppConfig]")
+{
+    AppConfig config;
+    config.set_defaults();
+    CHECK_FALSE(config.get_bool("multi_printer_zoom_to_bed"));
+
+    config.set_bool("multi_printer_zoom_to_bed", true);
+    config.set_defaults();
+    CHECK(config.get_bool("multi_printer_zoom_to_bed"));
+
+    // An empty value counts as not set.
+    config.set("multi_printer_zoom_to_bed", "");
+    config.set_defaults();
+    CHECK_FALSE(config.get_bool("multi_printer_zoom_to_bed"));
+}
+
 TEST_CASE("AppConfig network version helpers", "[AppConfig]") {
     AppConfig config;
 

@@ -45,21 +45,4 @@ std::vector<Vec2d> printer_row_offsets(const std::vector<RowLayoutPlate> &plates
     return offsets;
 }
 
-int printer_row_plate_at(const std::vector<RowLayoutPlate> &plates,
-                         const std::vector<Vec2d>          &offsets,
-                         const Vec2d                       &point,
-                         double                             gap_ratio)
-{
-    if (plates.size() != offsets.size() || !point.allFinite())
-        return -1;
-    for (size_t i = 0; i < plates.size(); ++i) {
-        const Vec2d &size = plates[i].size;
-        const Vec2d &min  = offsets[i];
-        if (point.x() >= min.x() && point.x() < min.x() + size.x() * (1. + gap_ratio) &&
-            point.y() > min.y() - size.y() * gap_ratio && point.y() <= min.y() + size.y())
-            return int(i);
-    }
-    return -1;
-}
-
 } // namespace Slic3r
