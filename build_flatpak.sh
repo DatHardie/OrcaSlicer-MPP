@@ -345,7 +345,7 @@ echo -e "${YELLOW}Creating Flatpak bundle...${NC}"
 if ! flatpak build-bundle \
     "$BUILD_DIR/repo" \
     "$BUNDLE_NAME" \
-    com.orcaslicer.OrcaSlicer \
+    io.github.OrcaSlicerMPP.OrcaSlicer \
     --arch="$ARCH"; then
     echo -e "${RED}Error: Failed to create Flatpak bundle${NC}"
     exit 1
@@ -364,10 +364,10 @@ echo -e "${BLUE}To install the Flatpak:${NC}"
 echo -e "flatpak install --user $BUNDLE_NAME"
 echo ""
 echo -e "${BLUE}To run OrcaSlicer:${NC}"
-echo -e "flatpak run com.orcaslicer.OrcaSlicer"
+echo -e "flatpak run io.github.OrcaSlicerMPP.OrcaSlicer"
 echo ""
 echo -e "${BLUE}To uninstall:${NC}"
-echo -e "flatpak uninstall --user com.orcaslicer.OrcaSlicer"
+echo -e "flatpak uninstall --user io.github.OrcaSlicerMPP.OrcaSlicer"
 echo ""
 if [[ "$FORCE_CLEAN" != true ]]; then
     echo -e "${BLUE}Cache Management:${NC}"

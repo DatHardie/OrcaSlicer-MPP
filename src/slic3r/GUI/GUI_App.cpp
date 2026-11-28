@@ -2741,7 +2741,8 @@ void GUI_App::init_webview_runtime()
 void GUI_App::init_app_config()
 {
 	// Profiles for the alpha are stored into the PrusaSlicer-alpha directory to not mix with the current release.
-    SetAppName(SLIC3R_APP_KEY);
+    SetAppName(SLIC3R_APP_KEY "-MPP");
+    SetAppDisplayName(SLIC3R_APP_NAME " MPP");
 //	SetAppName(SLIC3R_APP_KEY "-alpha");
 //  SetAppName(SLIC3R_APP_KEY "-beta");
 //	SetAppDisplayName(SLIC3R_APP_NAME);
@@ -10408,6 +10409,14 @@ void GUI_App::associate_url(std::wstring url_prefix)
 
     wxRegKey key_first(wxRegKey::HKCU, L"Software\\Classes\\" + url_prefix);
     wxRegKey key_full(wxRegKey::HKCU, L"Software\\Classes\\" + url_prefix + L"\\shell\\open\\command");
+    // Leave orcaslicer:// to another installed OrcaSlicer.
+    if (url_prefix == L"orcaslicer" && key_full.Exists()) {
+        wxString current;
+        key_full.QueryValue(wxEmptyString, current);
+        const wxString current_exe = current.AfterFirst('"').BeforeFirst('"');
+        if (!current_exe.empty() && current_exe.CmpNoCase(wbinary) != 0 && wxFileExists(current_exe))
+            return;
+    }
     if (!key_first.Exists()) {
         key_first.Create(false);
     }

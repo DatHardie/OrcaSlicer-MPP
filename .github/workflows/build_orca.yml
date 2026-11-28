@@ -365,7 +365,11 @@ jobs:
           source ${{ github.workspace }}/scripts/create_dmg.sh
           mkdir -p ${{ github.workspace }}/build/universal/OrcaSlicer_dmg
           rm -rf ${{ github.workspace }}/build/universal/OrcaSlicer_dmg/*
-          cp -R ${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer.app ${{ github.workspace }}/build/universal/OrcaSlicer_dmg/
+          # Own name and bundle ID: installs next to OrcaSlicer.
+          app="${{ github.workspace }}/build/universal/OrcaSlicer_dmg/OrcaSlicer MPP.app"
+          cp -R ${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer.app "$app"
+          # orcaslicer:// links stay with OrcaSlicer.
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier io.github.OrcaSlicerMPP.OrcaSlicer' -c 'Delete :CFBundleURLTypes' "$app/Contents/Info.plist"
           ln -sfn /Applications ${{ github.workspace }}/build/universal/OrcaSlicer_dmg/Applications
           create_dmg "OrcaSlicer" ${{ github.workspace }}/build/universal/OrcaSlicer_dmg OrcaSlicer_Mac_universal_${{ env.ver }}.dmg
           

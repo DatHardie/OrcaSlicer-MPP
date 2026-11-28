@@ -350,6 +350,9 @@ bool instance_check(int argc, char** argv, bool app_config_single_instance)
 			hashed_path = std::hash<std::string>{}(boost::filesystem::system_complete(argv[0]).string());
 		}
 	}
+	// Own instance name for each Flatpak app.
+	if (const char *flatpak_id = std::getenv("FLATPAK_ID"); flatpak_id != nullptr && is_running_in_flatpak())
+		hashed_path ^= std::hash<std::string>{}(flatpak_id);
 #endif // _WIN32
 
 	std::string lock_name 	= std::to_string(hashed_path);

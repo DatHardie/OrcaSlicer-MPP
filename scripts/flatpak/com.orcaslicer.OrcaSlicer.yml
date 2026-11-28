@@ -1,4 +1,5 @@
-app-id: com.orcaslicer.OrcaSlicer
+# Own app ID: installs next to OrcaSlicer.
+app-id: io.github.OrcaSlicerMPP.OrcaSlicer
 runtime: org.gnome.Platform
 runtime-version: "50"
 sdk: org.gnome.Sdk
@@ -421,8 +422,10 @@ modules:
 
       - | # Desktop integration files
         install -Dm644 -t /app/share/icons/hicolor/scalable/apps/ resources/images/OrcaSlicer.svg
-        install -Dm644 ${FLATPAK_ID}.metainfo.xml /app/share/metainfo/${FLATPAK_ID}.metainfo.xml
-        desktop-file-edit --set-key=Exec --set-value="entrypoint %U" /app/share/applications/${FLATPAK_ID}.desktop
+        install -Dm644 com.orcaslicer.OrcaSlicer.metainfo.xml /app/share/metainfo/${FLATPAK_ID}.metainfo.xml
+        sed -i -e "s/com\.orcaslicer\.OrcaSlicer/${FLATPAK_ID}/g" -e "s|<name>OrcaSlicer</name>|<name>OrcaSlicer MPP</name>|" /app/share/metainfo/${FLATPAK_ID}.metainfo.xml
+        mv /app/share/applications/com.orcaslicer.OrcaSlicer.desktop /app/share/applications/${FLATPAK_ID}.desktop
+        desktop-file-edit --set-key=Exec --set-value="entrypoint %U" --set-name="OrcaSlicer MPP" --remove-mime-type=x-scheme-handler/orcaslicer /app/share/applications/${FLATPAK_ID}.desktop
         install -Dm755 entrypoint /app/bin
         install -Dm755 umount /app/bin
 

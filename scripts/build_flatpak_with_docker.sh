@@ -213,7 +213,7 @@ flatpak build-bundle \
     --arch="$BUILD_ARCH" \
     flatpak-repo \
     "$BUNDLE_NAME" \
-    com.orcaslicer.OrcaSlicer
+    io.github.OrcaSlicerMPP.OrcaSlicer
 bundle_end=$(date +%s)
 bundle_duration=$((bundle_end - bundle_start))
 
