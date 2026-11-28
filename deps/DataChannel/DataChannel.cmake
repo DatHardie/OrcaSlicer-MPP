@@ -15,8 +15,8 @@ if (FLATPAK)
 else()
     set(_datachannel_source
         GIT_REPOSITORY https://github.com/paullouisageneau/libdatachannel.git
-        # v0.24.5; a commit cannot be fetched shallow.
-        GIT_TAG 443f6934d9007eb7076ab7825ba330f355fcbead
+        GIT_TAG v0.24.5
+        GIT_SHALLOW ON
         GIT_SUBMODULES_RECURSE ON
     )
 endif()
